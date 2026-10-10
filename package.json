@@ -1,0 +1,51 @@
+{
+  "name": "zhusi",
+  "version": "0.1.0",
+  "description": "本地优先的项目设计与架构讲解 CLI",
+  "keywords": [
+    "architecture",
+    "design",
+    "adr",
+    "cli",
+    "mcp",
+    "ai-agent",
+    "documentation",
+    "local-first"
+  ],
+  "homepage": "https://github.com/EvilJul/zhusi#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EvilJul/zhusi.git"
+  },
+  "bugs": {
+    "url": "https://github.com/EvilJul/zhusi/issues"
+  },
+  "license": "UNLICENSED",
+  "author": "EvilJul",
+  "type": "module",
+  "bin": {
+    "zhusi": "dist/cli/index.js"
+  },
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "files": ["dist", "skills", "README.md", "LICENSE"],
+  "scripts": {
+    "prepare": "npm run build",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "lint": "npm run typecheck",
+    "pack:check": "npm pack --dry-run",
+    "smoke": "node tests/smoke.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "commander": "^15.0.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "typescript": "^5.9.3"
+  }
+}

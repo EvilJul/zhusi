@@ -1,0 +1,9 @@
+src/
+tests/
+openspec/
+docs/
+.codegraph/
+.agents/
+tsconfig.json
+*.map
+*.tsbuildinfo
