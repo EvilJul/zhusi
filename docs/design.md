@@ -1,14 +1,14 @@
 # 筑思（Zhusi）详细设计
 
-版本：0.1 · 日期：2026-10-09 · 状态：拟议设计，尚未实现
+版本：0.2 · 日期：2026-10-10 · 状态：CLI 基础已实现；MCP 工具集与 Skill 适配待实现
 
 ## 1. 一页概览
 
 筑思是供 AI 调用的本地项目设计工具，帮助架构经验不足的开发者，在开发前想清业务、识别遗漏、选择适当架构并理解选择原因。
 
-形态：一个 npm 分发的 TypeScript 程序，提供 CLI 与 stdio MCP；附带宿主适配的 Skill；生成可离线查看的静态网页。第一版不内置模型调用，借用用户现有 AI 客户端，多模型通过共享项目文件异步协作。
+形态：一个 npm 分发的 TypeScript 程序，提供 CLI 与 stdio MCP；附带宿主适配的 Skill；生成可离线查看的静态网页。第一版不内置模型调用，借用用户现有 AI 客户端，多模型通过共享项目文件异步协作。CLI 与 MCP 必须支持 Windows、macOS、Linux（含 x64 与 arm64）；不依赖 PowerShell、bash 或平台专属路径。
 
-成功标准：用户能在报告中迅速找到“做什么、流程怎样、为什么这样设计、先实现什么、哪些问题尚未确定”。
+成功标准：用户能在报告中迅速找到“做什么、流程怎样、为什么这样设计、先实现什么、已有系统实际上怎样运行、哪些问题尚未确定”。
 
 ## 2. 需求与边界
 
@@ -25,7 +25,9 @@
 - 三种角色的流程模板：业务分析、架构设计、独立评审。
 - 串行或异步跨客户端协作，版本冲突检测。
 - 状态检查、完整性验证、静态网页报告。
+- 对已有代码项目生成分层的架构讲解，并明确区分代码事实、AI 推断和设计意图。
 - 简体中文优先，数据支持 Unicode。
+- 跨平台运行：Windows、macOS、Linux 的 x64/arm64 均提供一致的 CLI、MCP 和报告行为。
 
 ### 2.3 暂缓
 
@@ -67,12 +69,23 @@ ready 表示材料满足完整性要求，并不代表已经实现或证明架�
 更新需求产生新 revision，基于旧 revision 的方案与决策标为需复核。第一版保守地将相关设计全部标为过期，不实现复杂依赖传播。用户或 AI 可以重新确认仍适用的决策，形成新的引用关系。
 
 ### 4.4 多 AI 协作
-
 AI A 读取版本 3 并提交方案；AI B 在之后读取方案版本 4 并提交评审；AI A 根据意见提交版本 5。宿主负责调用 AI；MCP 服务不自行产生模型回答。
 
 角色与模型分离：actor 保存客户端提供的角色、模型标识与会话标识，这些是来源声明，不是可验证的身份认证。
 
 默认至多两轮评审是 Skill 行为建议；需要用户解决的问题可随时暂停。未达成共识的结论不自动按投票决定。
+
+### 4.5 解释已有项目架构
+
+这是与“从想法到蓝图”并列的一条入口，面向已经存在代码的项目：
+
+1. `understand existing`：用户指定项目根目录；宿主 AI 使用可用的代码理解工具（首选 CodeGraph）读取入口、模块、依赖、调用关系和配置，不由筑思执行未知 shell 或自行扫描任意路径。
+2. `capture snapshot`：保存代码提交号或目录指纹、工具来源、读取范围和生成时间。无法确认的内容必须标记为 unknown，不能伪装成事实。
+3. `explain`：生成三层讲解：两分钟总览、按一次请求/业务流程的运行路径、模块与关键符号的深度说明。每个结论都能回到文件、符号或配置证据。
+4. `compare`：如果项目同时有筑思设计方案，分别展示“设计意图”和“当前实现”，列出一致、偏离、未知和可能过期的部分；不自动判定偏离一定是缺陷。
+5. `report`：将讲解作为报告中的独立章节；代码发生变化或来源 revision 不匹配时标记为陈旧，要求重新解释而不是静默复用。
+
+已有项目讲解可以独立使用，不要求先完成需求澄清或架构提案；它也不等同于自动重构、代码审计或生成完整文档。
 
 ## 5. 设计产物
 
@@ -97,6 +110,18 @@ AI A 读取版本 3 并提交方案；AI B 在之后读取方案版本 4 并提�
 ### 5.5 评审记录
 
 记录具体目标 ID 和版本、问题、优先级、理由、建议、证据以及处置结果。优先级：blocker / important / suggestion。处置：accepted / rejected / deferred；每种都需理由。accepted 还需关联解决版本，不允许仅改标签就代表已修复。
+### 5.6 已有架构讲解
+
+讲解是基于代码证据的可追溯产物，而不是把模型长文本直接保存为“架构真相”。至少包含：
+
+- 项目边界、运行入口、启动方式和外部依赖；
+- 模块/包职责、依赖方向、关键调用链和数据流；
+- 至少一个用户可理解的端到端场景，包含正常路径、关键分支和失败处理；
+- 配置、持久化、鉴权、异步任务和部署关系（仅在证据存在时描述）；
+- 代码事实、设计意图、AI 推断、未知项和风险提示的分类；
+- `summary`、`walkthrough`、`deepDive` 三层内容，以及每条结论的 `evidence`、`confidence`、`sourceSnapshot`。
+
+解释不能宣称模型“理解了全部代码”。超出读取范围、缺少运行时信息或仅凭命名推断的内容必须显示限制。
 
 ## 6. 技术架构
 
@@ -119,6 +144,11 @@ AI 客户端 ─ Skill 引导
 
 ### 6.1 选型与原因
 
+跨平台基线：运行时使用受支持的 Node.js LTS；发布包必须声明 `bin` 入口，使 `npm install -g zhusi`、`npx zhusi` 和项目内本地调用使用同一 CLI。不得要求用户把仓库目录加入 PATH 才能运行；文档同时提供 Windows PowerShell、Windows cmd、macOS/Linux shell 和 `npx` 示例。安装后若直接输入 `zhusi` 仍不可用，CLI 应给出可操作的 PATH 或包管理器提示。
+
+平台实现约束：路径统一使用 Node 的 `path`/`url` 能力，不拼接 `/` 或 `\`；文件名、大小写、Unicode、CRLF/LF 和符号链接行为需测试；锁与原子写入不能假设 Unix inode 或 bash 工具。Windows 下处理文件占用、长路径和权限错误，macOS/Linux 下处理大小写敏感、信号和权限差异。报告使用 file URL 规则生成，避免依赖本地 HTTP 服务器。
+
+
 - TypeScript + Node.js：CLI、MCP、校验和渲染共用代码；不增加第二种后端语言。Node 最低版本在实现时按 MCP SDK 支持矩阵确定。
 - 官方 MCP TypeScript SDK：避免自写协议、工具发现与 stdio 消息处理。具体版本实现时锁定并验证。
 - Zod：运行时校验 AI 输入与文件数据；TypeScript 类型不能代替输入校验。
@@ -139,6 +169,7 @@ src/
   services/       用例、修订与评审处置
   storage/        文件、锁与原子提交
   report/         HTML、样式与图形渲染
+  explain/        已有代码架构讲解与证据归一化
   integrations/   Skill 宿主适配与导出
 skills/           角色与工作流模板
 tests/fixtures/   完整设计、草案与损坏样例
@@ -156,12 +187,19 @@ CLI 与 MCP 只处理输入输出；必须调用相同应用服务，防止验�
     000001.json
     000002.json
   lock/
+  architecture-explanations/
+    000001.json
+  reports/
+  architecture-explanations/
+    000001.json
   reports/
     index.html
     assets/
 ```
 
 每个 revision 是完整、不可变快照，包含需求、方案、决策、问题和评审。第一版设定单快照大小上限（例如 5 MB，可配置）；规模超过限制时提示归档或升级存储设计，而非静默丢弃。Markdown 导出不作为第二份权威数据。
+
+架构讲解单独以不可变快照保存，并引用对应的设计 revision（可为空）和代码 snapshot。代码 snapshot 至少记录项目根目录标识、Git commit（若有）或目录指纹、工具/版本、读取范围及文件清单摘要；不得把整个源码复制进 `.zhusi/`。同一代码 snapshot 的重复请求应可复用或明确产生新解释版本。
 
 通用字段：schemaVersion、projectId、revision、createdAt、actor、summary。对象使用稳定 ID；timestamp 保存 ISO 8601 UTC，网页按用户时区显示。
 
@@ -199,7 +237,7 @@ CLI 与 MCP 只处理输入输出；必须调用相同应用服务，防止验�
 
 ## 8. CLI 设计
 
-以下都是拟议接口：
+以下接口中，除 `install-skill` 外均已实现（`mcp` 目前仅为启动边界；`install-skill` 属后续 Skill 阶段）：
 
 | 命令 | 行为 |
 |---|---|
@@ -211,12 +249,30 @@ CLI 与 MCP 只处理输入输出；必须调用相同应用服务，防止验�
 | zhusi install-skill --host NAME | 安装选定宿主适配，覆盖需显式选项 |
 | zhusi repair --dry-run | 报告损坏指针、孤立快照和锁恢复建议 |
 | zhusi mcp --project PATH | 启动固定项目的 stdio MCP 服务 |
+| npx zhusi <command> | 不安装全局命令时运行同一 CLI，适用于 PATH 未配置的环境 |
 
-CLI 结构化输出写 stdout，日志写 stderr。退出码建议：0 成功；1 运行错误；2 输入或 schema 无效；3 冲突或忙；4 设计尚未达到所请求阶段。精确定义实现时固定到文档和测试。
+CLI 结构化输出写 stdout，日志写 stderr。退出码建议：0 成功；1 运行错误；2 输入或 schema 无效；3 冲突或忙；4 设计尚未达到所请求阶段。精确定义实现时固定到文档和测试。命令发现必须覆盖全局安装、`npx`、Windows PowerShell/cmd、macOS/Linux shell 和 CI 无交互环境。
+
+## 8.1 全平台安装与运行
+
+第一版发布必须提供以下等价路径：
+
+```sh
+# 任意平台：不依赖全局 PATH
+npx zhusi init
+
+# Windows PowerShell / cmd、macOS / Linux shell：全局安装后
+npm install --global zhusi
+zhusi init
+```
+
+安装说明必须明确 Node.js 最低版本、npm/pnpm/yarn 兼容性、全局 npm bin 目录和 PATH 修复方法。推荐优先使用 `npx zhusi` 验证安装，再选择全局安装。禁止把“命令未找到”误认为项目初始化失败：这是 CLI 尚未安装或 PATH 未生效。
+
+MCP 配置示例也必须使用跨平台可发现的命令或绝对运行时路径，不能写死 `/usr/bin/...`、`C:\Program Files\...` 或 bash-only 包装脚本。宿主无法直接发现 npm 全局 bin 时，应支持 `npx --yes zhusi mcp --project PATH` 或等价的 Node 可执行入口。
 
 ## 9. MCP 接口契约
 
-启动时绑定用户选择的项目根目录；工具不接受任意文件路径。第一版提供 8 个核心工具。
+启动时绑定用户选择的项目根目录；工具不接受任意文件路径。第一版提供 10 个核心工具。
 
 | 工具 | 输入重点 | 输出/行为 |
 |---|---|---|
@@ -227,7 +283,11 @@ CLI 结构化输出写 stdout，日志写 stderr。退出码建议：0 成功；
 | record_decision | expectedRevision、requestId、decision | 保存取舍；不自动代表用户批准 |
 | resolve_finding | expectedRevision、requestId、findingId、resolution | 校验理由与解决版本关联 |
 | manage_question | expectedRevision、requestId、action、question | 新增、回答或延期；保留来源 |
-| render_report | revision? | 返回生成路径、来源版本与警告 |
+| render_report | revision?、explanationId? | 返回生成路径、来源版本与警告 |
+| save_architecture_explanation | expectedRevision、requestId、codeSnapshot、explanation | 校验证据、来源范围和讲解层级后保存 |
+| get_architecture_explanation | explanationId、detail、section? | 返回摘要、指定讲解层级或证据分页 |
+
+**已实现**：`zhusi mcp --project PATH` 提供真正的 stdio MCP 服务器，当前暴露六个工具——`zhusi_status`、`zhusi_read_design`、`zhusi_submit_design`、`zhusi_validate`、`zhusi_render_report`、`zhusi_save_explanation`。服务器启动时绑定单个项目根，工具不接收项目路径；stdout 只承载协议帧；工具失败返回结构化业务错误而不中断会话。设计上采取“读取完整 revision → 修改 → 整体提交”的模型，因此上表中细粒度的字段级工具（update_requirements、save_proposal、record_decision、resolve_finding 等）尚未实现，可作为后续在 `zhusi_submit_design` 之上的便捷封装。
 
 只读工具不修改项目。阶段由状态与完整性规则推导；需要用户确认的决定通过 record_decision 的确认字段记录，Skill 必须明确说明确认来源，工具不能独立验证“确为人类”。
 
@@ -249,7 +309,11 @@ Skill 不封装宿主特有的隐藏能力，而是说明何时调用工具及�
 
 ## 11. 网页报告
 
-顶层固定五块：项目概览、业务流程、架构与决策、开发顺序、未决问题。讨论放在折叠区，按“问题→意见→处置”展示，保留各模型来源与版本。
+**已实现**：离线自包含 HTML 报告，分块为 概览 / 需求 / 架构 / 决策 / 未决问题 / 评审 / 已有架构讲解 / 警告，顶部提供可跳转目录且除目录外零脚本。架构图由 `architecture.modules` 与 `architecture.dependencies` 生成分层 SVG：模块有 `layer` 时按层分列并显示层带，否则按依赖关系自动拓扑分层（环上的节点兜底放末列）；节点显示名称与职责，连线带依赖标签，跨列连线从中间模块上方绕过而不是从方框后穿过，无模块数据时给出明确占位。决策卡片展示选择、理由、备选方案、代价与重新评估条件；未决问题按 blocker / important / suggestion 分组并配色。窄屏下表格与架构图各自横向滚动，打印时隐藏目录并避免卡片断页。
+
+**仍待实现**：业务流程与开发顺序两块（数据模型尚无对应字段），以及把评审讨论按“问题→意见→处置”折叠展示。
+
+原设计目标：顶层固定六块：项目概览、业务流程、架构与决策、已有架构讲解、开发顺序、未决问题。已有架构讲解默认先显示两分钟总览，再按用户选择展开运行路径、模块深度说明、证据和设计/实现差异。讨论放在折叠区，按“问题→意见→处置”展示，保留各模型来源与版本。
 
 建议文字预算：项目概览约 150 字；单张决策摘要约 100 字；顶层最多突出 5 个关键决策。其余通过“查看全部”访问，不能删除。超长文本给出编辑警告而非生硬截断。
 
@@ -269,12 +333,13 @@ render_report 只生成文件；发布到公网必须是用户另行明确授权
 - 公共仓库只发布工具与示例，不自动把用户 .zhusi 数据上传。
 - 运行记录最多是对进程操作的本地记录，不能称为防篡改审计或模型真实思考。
 - 设计质量验证只能识别结构与明确规则，不能证明架构适用；关键假设仍需原型或人工确认。
+- 发布前必须在 Windows、macOS、Linux 的 x64/arm64 矩阵验证安装、CLI、MCP stdio、文件锁、报告打开和路径处理。
 
 ## 13. 与 OpenSpec / CodeGraph 配合
 
 筑思先形成业务与设计决策，再导出 Markdown 给 OpenSpec；第一版不直接写入其内部目录，避免依赖未稳定格式。
 
-在已有代码项目中，宿主 AI 可以调用 CodeGraph 查实际模块和依赖，再记录与设计的差异。筑思不自己实现代码索引。设计计划与当前代码事实在报告中分别标注。
+在已有代码项目中，宿主 AI 可以调用 CodeGraph 查实际模块和依赖，再通过架构讲解工作流保存证据、解释和与设计的差异。筑思不自己实现代码索引，也不把 CodeGraph 的结果未经来源标注地当作事实。设计计划与当前代码事实在报告中分别标注。
 
 官方参考（用于定位，具体接口实现时重新核查）：
 
