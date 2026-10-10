@@ -17,7 +17,7 @@ export async function cleanup(dir) {
 
 export function runCli(args, options = {}) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [cliPath, ...args], {
+    const child = spawn(process.execPath, [options.entry ?? cliPath, ...args], {
       cwd: options.cwd ?? root,
       env: { ...process.env, ...options.env },
     });

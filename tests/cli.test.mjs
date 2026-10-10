@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { cleanup, makeTempDir, repoRoot, runCli } from './helpers.mjs';
+import { cleanup, cliPath, makeTempDir, repoRoot, runCli } from './helpers.mjs';
 
 test('--help 在非项目目录退出 0 并输出到 stdout', async () => {
   const dir = await makeTempDir();
@@ -19,6 +19,28 @@ test('--version 输出包版本', async () => {
   const result = await runCli(['--version']);
   assert.equal(result.code, 0);
   assert.equal(result.stdout.trim(), '0.1.0');
+});
+
+test('npm bin 符号链接入口仍输出版本', async (t) => {
+  const dir = await makeTempDir();
+  const link = path.join(dir, 'zhusi');
+  try {
+    try {
+      await symlink(cliPath, link);
+    } catch (error) {
+      if (error && (error.code === 'EPERM' || error.code === 'ENOTSUP')) {
+        t.skip('当前环境不能创建符号链接');
+        return;
+      }
+      throw error;
+    }
+    const result = await runCli(['--version'], { entry: link, cwd: dir });
+    assert.equal(result.code, 0);
+    assert.equal(result.stdout.trim(), '0.1.0');
+    assert.equal(result.stderr, '');
+  } finally {
+    await cleanup(dir);
+  }
 });
 
 test('未知命令返回非零并给出帮助提示', async () => {

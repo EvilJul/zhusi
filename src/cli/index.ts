@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { Command, CommanderError, Option } from 'commander';
+import { realpathSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ZodError } from 'zod';
 import { EXIT_CODES, ZhusiError } from '../domain/errors.js';
 import {
@@ -306,8 +308,18 @@ export async function run(argv: readonly string[]): Promise<number> {
   }
 }
 
-const invokedPath = process.argv[1];
-if (invokedPath && /(?:^|[\\/])cli[\\/]index\.(?:js|ts)$/.test(invokedPath)) {
+// npm 的 bin 是名为 zhusi 的符号链接，argv[1] 不会以 cli/index.js 结尾。
+function isDirectInvocation(): boolean {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(invoked) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectInvocation()) {
   run(process.argv).then((code) => {
     if (code !== 0) process.exitCode = code;
   });
