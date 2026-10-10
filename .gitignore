@@ -7,3 +7,6 @@ coverage/
 *.key
 .DS_Store
 .zhusi/
+.claude/
+.cursor/
+.codex/
