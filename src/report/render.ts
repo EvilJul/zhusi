@@ -87,13 +87,59 @@ function questionGroups(items: DetailItem[]): string {
   )).join('');
 }
 
-function reviewList(items: DetailItem[]): string {
+interface ReviewShape extends DetailItem {
+  opinions?: Array<{ author?: string; text?: string; at?: string }>;
+  disposition?: { decision?: string; reason?: string; by?: string; at?: string; revision?: number };
+}
+
+interface FlowShape { id?: string; name?: string; trigger?: string; steps?: Array<{ actor?: string; action?: string; result?: string }>; exceptions?: string[] }
+interface StepShape { id?: string; name?: string; summary?: string; dependsOn?: string[]; deliverables?: string[]; status?: string }
+
+const STEP_LABEL: Record<string, string> = { planned: '计划中', 'in-progress': '进行中', done: '已完成' };
+const STEP_TONE: Record<string, string> = { planned: 'muted', 'in-progress': 'warn', done: 'ok' };
+
+function reviewDecision(item: ReviewShape): string | undefined {
+  return item.disposition?.decision ?? (item.status && DECISION_LABEL[item.status] && item.status !== 'proposed' ? item.status : undefined);
+}
+
+/** 评审按“问题→意见→处置”折叠展示；未处置的评审默认展开，已处置的默认收起。 */
+function reviewThreads(items: ReviewShape[]): string {
   if (items.length === 0) return emptyNote('暂无评审记录。');
-  return `<ul class="plain">${items.map((item) => {
+  return items.map((item) => {
+    const decision = reviewDecision(item);
     const priority = item.priority ? badge(PRIORITY_LABEL[item.priority] ?? item.priority, PRIORITY_TONE[item.priority] ?? 'muted') : '';
-    const disposition = item.status ? badge(DECISION_LABEL[item.status] ?? item.status, DECISION_TONE[item.status] ?? 'muted') : '';
-    return `<li><span>${esc(item.summary)}</span> ${priority} ${disposition}${item.details ? `<p class="muted">${esc(item.details)}</p>` : ''}</li>`;
-  }).join('')}</ul>`;
+    const state = decision ? badge(DECISION_LABEL[decision] ?? decision, DECISION_TONE[decision] ?? 'muted') : badge('待处置', 'warn');
+    const opinions = item.opinions?.length
+      ? `<ol class="plain">${item.opinions.map((opinion) => `<li>${opinion.author ? `<b>${esc(opinion.author)}</b>：` : ''}${esc(opinion.text)}</li>`).join('')}</ol>`
+      : emptyNote('尚无讨论意见。');
+    const reason = item.disposition?.reason ?? (decision ? item.details : undefined);
+    const disposition = decision
+      ? `<p>${badge(DECISION_LABEL[decision] ?? decision, DECISION_TONE[decision] ?? 'muted')}${reason ? ` ${esc(reason)}` : ''}${item.disposition?.by ? `<span class="muted"> · ${esc(item.disposition.by)}</span>` : ''}${item.disposition?.revision ? `<span class="muted"> · revision ${item.disposition.revision}</span>` : ''}</p>`
+      : emptyNote('尚未处置。');
+    const issueDetail = item.details && !(decision && !item.disposition?.reason) ? `<p class="muted">${esc(item.details)}</p>` : '';
+    return `<details class="thread"${decision ? '' : ' open'}><summary>${esc(item.summary)} ${priority} ${state}</summary>`
+      + `<dl><div><dt>问题</dt><dd>${esc(item.summary)}${issueDetail}</dd></div><div><dt>意见</dt><dd>${opinions}</dd></div><div><dt>处置</dt><dd>${disposition}</dd></div></dl></details>`;
+  }).join('');
+}
+
+function flowSection(flows: FlowShape[]): string {
+  if (flows.length === 0) return '';
+  return `<section id="flows"><h2>业务流程</h2>${flows.map((flow) => {
+    const steps = flow.steps?.length
+      ? `<ol class="plain">${flow.steps.map((step) => `<li>${step.actor ? `<b>${esc(step.actor)}</b>：` : ''}${esc(step.action)}${step.result ? `<span class="muted"> → ${esc(step.result)}</span>` : ''}</li>`).join('')}</ol>`
+      : emptyNote('尚未拆分步骤。');
+    const exceptions = flow.exceptions?.length ? detail(`异常流程（${flow.exceptions.length}）`, bullets(flow.exceptions)) : '';
+    return `<article class="card"><header><h3>${esc(flow.name)}</h3></header>${flow.trigger ? `<p class="muted">触发：${esc(flow.trigger)}</p>` : ''}${steps}${exceptions}</article>`;
+  }).join('')}</section>`;
+}
+
+function developmentSection(steps: StepShape[]): string {
+  if (steps.length === 0) return '';
+  return `<section id="development"><h2>开发顺序</h2><ol class="plain">${steps.map((step) => {
+    const status = step.status ? ` ${badge(STEP_LABEL[step.status] ?? step.status, STEP_TONE[step.status] ?? 'muted')}` : '';
+    const depends = step.dependsOn?.length ? `<span class="muted"> · 依赖 ${esc(step.dependsOn.join('、'))}</span>` : '';
+    return `<li><b>${esc(step.name)}</b>${status}${depends}${step.summary ? `<p class="muted">${esc(step.summary)}</p>` : ''}${bullets(step.deliverables)}</li>`;
+  }).join('')}</ol></section>`;
 }
 
 function linkRow(links: Array<{ label?: string; url?: string }>): string {
@@ -193,6 +239,9 @@ dd{margin:0}
 .badge.bad{background:var(--bad-soft);color:var(--bad)}
 .badge.muted{background:#eef1ef;color:var(--muted)}
 details{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
+details.thread{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:10px 14px;margin:0 0 10px}
+.thread dl{margin:10px 0 0;display:grid;gap:8px}
+.thread dl>div{display:grid;grid-template-columns:60px 1fr;gap:10px}
 summary{cursor:pointer;font-size:13.5px;color:var(--brand);font-weight:600}
 ul.plain{margin:8px 0 0;padding-left:18px}
 ul.plain li{margin:3px 0}
@@ -229,15 +278,19 @@ export function renderHtml(input: { state: WorkspaceState; revision: DesignRevis
   const requirements = (revision?.requirements ?? []) as DetailItem[];
   const decisions = (revision?.decisions ?? []) as DetailItem[];
   const questions = (revision?.questions ?? []) as DetailItem[];
-  const reviews = (revision?.reviews ?? []) as DetailItem[];
+  const reviews = (revision?.reviews ?? []) as ReviewShape[];
+  const flows = (revision?.businessFlows ?? []) as FlowShape[];
+  const development = (revision?.developmentOrder ?? []) as StepShape[];
   const architecture = (revision?.architecture ?? {}) as ArchitectureShape;
   const blockers = questions.filter((question) => question.priority === 'blocker' && question.status !== 'resolved').length;
 
   const sections = [
     '<a href="#overview">概览</a>',
     requirements.length ? '<a href="#requirements">需求</a>' : '',
+    flows.length ? '<a href="#flows">业务流程</a>' : '',
     '<a href="#architecture">架构</a>',
     '<a href="#decisions">决策</a>',
+    development.length ? '<a href="#development">开发顺序</a>' : '',
     '<a href="#questions">未决问题</a>',
     reviews.length ? '<a href="#reviews">评审</a>' : '',
     explanation ? '<a href="#explanation">架构讲解</a>' : '',
@@ -251,10 +304,12 @@ export function renderHtml(input: { state: WorkspaceState; revision: DesignRevis
 <section id="overview"><h2>概览</h2>${overviewLead || (summary.trim() ? '' : '<p class="lead">尚无设计摘要。</p>')}
 <ul class="stats"><li><b>${requirements.length}</b><span>需求条目</span></li><li><b>${decisions.length}</b><span>架构决策</span></li><li><b>${questions.length}</b><span>未决问题</span></li><li><b>${blockers}</b><span>阻塞项</span></li></ul></section>
 ${requirements.length ? `<section id="requirements"><h2>需求</h2>${itemList(requirements)}</section>` : ''}
+${flowSection(flows)}
 ${architectureSection(architecture)}
 <section id="decisions"><h2>架构决策</h2>${decisionCards(decisions)}</section>
+${developmentSection(development)}
 <section id="questions"><h2>未决问题</h2>${questionGroups(questions)}</section>
-${reviews.length ? `<section id="reviews"><h2>评审记录</h2>${reviewList(reviews)}</section>` : ''}
+${reviews.length ? `<section id="reviews"><h2>评审记录</h2>${reviewThreads(reviews)}</section>` : ''}
 ${explanation ? explanationSection(explanation, explanationStale) : ''}
 <section id="warnings"><h2>警告</h2>${warnings.length ? `<ul class="plain">${warnings.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>` : '<p class="muted">无</p>'}</section>
 </main>
@@ -280,7 +335,21 @@ export function renderMarkdown(input: { state: WorkspaceState; revision: DesignR
     '',
   ];
 
+  const flows = (revision?.businessFlows ?? []) as FlowShape[];
+  const development = (revision?.developmentOrder ?? []) as StepShape[];
+  const reviews = (revision?.reviews ?? []) as ReviewShape[];
+
   if (requirements.length) lines.push('## 需求', ...requirements.map((item) => `- ${item.summary}`), '');
+  if (flows.length) {
+    lines.push('## 业务流程');
+    for (const flow of flows) {
+      lines.push(`### ${flow.name}`);
+      if (flow.trigger) lines.push(`触发：${flow.trigger}`, '');
+      (flow.steps ?? []).forEach((step, index) => lines.push(`${index + 1}. ${step.actor ? `${step.actor}：` : ''}${step.action}${step.result ? ` → ${step.result}` : ''}`));
+      if (flow.exceptions?.length) lines.push('', '异常流程：', ...flow.exceptions.map((item) => `- ${item}`));
+      lines.push('');
+    }
+  }
   if (decisions.length) {
     lines.push('## 架构决策');
     for (const item of decisions) {
@@ -302,5 +371,28 @@ export function renderMarkdown(input: { state: WorkspaceState; revision: DesignR
     const untagged = questions.filter((question) => !question.priority);
     if (untagged.length) lines.push('### 未标优先级', ...untagged.map((item) => `- ${item.summary}`), '');
   }
+  if (development.length) {
+    lines.push('## 开发顺序');
+    development.forEach((step, index) => {
+      const meta = [step.status ? STEP_LABEL[step.status] ?? step.status : '', step.dependsOn?.length ? `依赖 ${step.dependsOn.join('、')}` : ''].filter(Boolean).join('；');
+      lines.push(`${index + 1}. **${step.name}**${meta ? `（${meta}）` : ''}${step.summary ? `：${step.summary}` : ''}`);
+      for (const deliverable of step.deliverables ?? []) lines.push(`   - ${deliverable}`);
+    });
+    lines.push('');
+  }
+  if (reviews.length) {
+    lines.push('## 评审记录');
+    for (const item of reviews) {
+      const decision = reviewDecision(item);
+      lines.push('<details>', `<summary>${mdHtml(item.summary ?? '')}（${decision ? DECISION_LABEL[decision] ?? decision : '待处置'}）</summary>`, '');
+      lines.push(`- 问题：${item.summary}${item.priority ? `（${PRIORITY_LABEL[item.priority] ?? item.priority}）` : ''}`);
+      for (const opinion of item.opinions ?? []) lines.push(`- 意见：${opinion.author ? `${opinion.author}：` : ''}${opinion.text}`);
+      const reason = item.disposition?.reason ?? (decision ? item.details : undefined);
+      lines.push(`- 处置：${decision ? `${DECISION_LABEL[decision] ?? decision}${reason ? ` — ${reason}` : ''}` : '尚未处置'}`);
+      lines.push('', '</details>', '');
+    }
+  }
   return `${lines.join('\n')}\n`;
 }
+
+const mdHtml = (text: string) => esc(text);
