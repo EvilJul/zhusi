@@ -20,7 +20,7 @@
   "bugs": {
     "url": "https://github.com/EvilJul/zhusi/issues"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "author": "EvilJul",
   "type": "module",
   "bin": {
