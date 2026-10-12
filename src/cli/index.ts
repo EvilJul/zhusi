@@ -347,7 +347,8 @@ export async function run(argv: readonly string[]): Promise<number> {
     return typeof process.exitCode === 'number' ? process.exitCode : 0;
   } catch (error) {
     if (error instanceof CommanderError) {
-      return error.exitCode;
+      // --help / --version 正常退出；其余用法错误（缺少必填选项、未知命令或选项）按约定属于输入错误。
+      return error.exitCode === 0 ? 0 : EXIT_CODES.INVALID_INPUT;
     }
     const issue = error instanceof ZhusiError
       ? error
