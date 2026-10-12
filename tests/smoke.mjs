@@ -72,6 +72,9 @@ try {
   try {
     const tools = await mcpClient.listTools();
     assert.ok(tools.tools.some((tool) => tool.name === 'zhusi_submit_design'));
+    assert.ok(tools.tools.some((tool) => tool.name === 'zhusi_dispose_reviews'));
+    assert.ok((await mcpClient.listPrompts()).prompts.length >= 3);
+    assert.ok((await mcpClient.listResources()).resources.some((entry) => entry.uri === 'zhusi://projects'));
   } finally {
     await mcpClient.close();
   }
