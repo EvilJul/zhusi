@@ -1,0 +1,122 @@
+{
+  "expectedRevision": 0,
+  "requestId": "sample-booking-001",
+  "actor": { "client": "sample", "model": "hand-written" },
+  "stage": "reviewing",
+  "summary": "小型诊所预约系统：患者在线选择医生与时段完成预约，诊所前台管理排班与到诊。第一版只服务单个诊所，不接入支付。",
+  "requirements": [
+    { "id": "req_01", "summary": "患者可按医生和日期查看空闲时段并预约", "priority": "blocker" },
+    { "id": "req_02", "summary": "患者可在就诊前 2 小时取消预约", "priority": "important" },
+    { "id": "req_03", "summary": "前台可维护医生排班并标记到诊 / 爽约", "priority": "important" },
+    { "id": "req_04", "summary": "预约成功与取消时发送短信通知", "priority": "suggestion" }
+  ],
+  "businessFlows": [
+    {
+      "id": "flow_book",
+      "name": "患者预约",
+      "trigger": "患者在预约页选择医生与日期",
+      "steps": [
+        { "actor": "患者", "action": "选择医生和日期", "result": "看到空闲时段列表" },
+        { "actor": "系统", "action": "对所选时段加行级锁并创建 pending 预约", "result": "时段被暂时占用 5 分钟" },
+        { "actor": "患者", "action": "填写手机号并确认", "result": "预约变为 confirmed" },
+        { "actor": "系统", "action": "发送确认短信", "result": "患者收到预约号" }
+      ],
+      "exceptions": [
+        "两名患者同时抢同一时段：后到者收到“时段已被占用”，返回时段列表重新选择",
+        "5 分钟内未确认：pending 预约过期，时段自动释放",
+        "短信网关失败：预约仍然成功，通知进入重试队列，页面显示预约号"
+      ]
+    },
+    {
+      "id": "flow_cancel",
+      "name": "患者取消",
+      "trigger": "患者在“我的预约”点击取消",
+      "steps": [
+        { "actor": "系统", "action": "校验距就诊时间是否超过 2 小时" },
+        { "actor": "系统", "action": "预约置为 cancelled 并释放时段", "result": "时段重新可约" }
+      ],
+      "exceptions": ["距就诊不足 2 小时：拒绝在线取消，提示致电前台"]
+    }
+  ],
+  "architecture": {
+    "modules": [
+      { "id": "web", "name": "预约前端", "responsibility": "患者预约与取消页面", "layer": "界面" },
+      { "id": "admin", "name": "前台后台", "responsibility": "排班与到诊管理", "layer": "界面" },
+      { "id": "api", "name": "预约服务", "responsibility": "时段计算、加锁、状态流转", "layer": "应用" },
+      { "id": "notify", "name": "通知服务", "responsibility": "短信发送与重试", "layer": "应用" },
+      { "id": "db", "name": "PostgreSQL", "responsibility": "排班、时段、预约数据", "layer": "数据" }
+    ],
+    "dependencies": [
+      { "from": "web", "to": "api", "label": "HTTP" },
+      { "from": "admin", "to": "api", "label": "HTTP" },
+      { "from": "api", "to": "db", "label": "SQL 事务" },
+      { "from": "api", "to": "notify", "label": "异步任务" }
+    ],
+    "links": [],
+    "notes": "单体部署：预约服务与通知服务同进程，通知通过数据库任务表异步执行。"
+  },
+  "decisions": [
+    {
+      "id": "dec_01",
+      "summary": "用数据库行级锁防止超订",
+      "status": "accepted",
+      "choice": "SELECT ... FOR UPDATE 锁定时段行，并对 (slot_id, status=confirmed) 建唯一约束兜底",
+      "rationale": "单诊所并发量低，数据库事务足以保证一致性，无需引入额外组件",
+      "alternatives": ["Redis 分布式锁", "乐观锁 + 版本号重试"],
+      "tradeoffs": ["热门时段在高峰期会出现短暂锁等待"],
+      "revisitWhen": ["扩展到多诊所且单时段并发明显升高"]
+    },
+    {
+      "id": "dec_02",
+      "summary": "短信通知异步发送",
+      "status": "accepted",
+      "choice": "数据库任务表 + 定时轮询重试",
+      "rationale": "短信失败不应阻塞预约；任务表无需新增消息队列",
+      "alternatives": ["同步调用短信网关", "引入 RabbitMQ"],
+      "tradeoffs": ["通知最多延迟一个轮询周期（30 秒）"],
+      "revisitWhen": ["通知渠道超过两种或日发送量超过 1 万"]
+    }
+  ],
+  "questions": [
+    { "id": "q_01", "summary": "爽约多少次后限制在线预约？", "priority": "important", "status": "open" },
+    { "id": "q_02", "summary": "是否需要候补队列？", "priority": "suggestion", "status": "open" }
+  ],
+  "reviews": [
+    {
+      "id": "rev_01",
+      "summary": "pending 预约 5 分钟过期依赖定时任务，任务宕机时时段会被长期占用",
+      "priority": "important",
+      "opinions": [
+        { "author": "评审者 A", "text": "建议查询空闲时段时把已过期的 pending 视为空闲，而不是只依赖清理任务。" },
+        { "author": "设计负责人", "text": "同意，查询条件加上 expires_at > now()。" }
+      ],
+      "status": "accepted",
+      "disposition": { "decision": "accepted", "reason": "查询时把过期 pending 视为空闲，清理任务只负责归档。", "by": "设计负责人" }
+    },
+    {
+      "id": "rev_02",
+      "summary": "建议改用微服务拆分预约与通知",
+      "priority": "suggestion",
+      "opinions": [
+        { "author": "评审者 B", "text": "拆开后可以独立扩容通知服务。" },
+        { "author": "设计负责人", "text": "单诊所规模下运维成本远高于收益。" }
+      ],
+      "status": "rejected",
+      "disposition": { "decision": "rejected", "reason": "第一版只服务单诊所，单体加任务表已满足需求；拆分会引入部署与分布式事务成本。重新评估条件见 dec_02。", "by": "设计负责人" }
+    },
+    {
+      "id": "rev_03",
+      "summary": "是否需要支持家属代为预约？",
+      "priority": "suggestion",
+      "opinions": [{ "author": "评审者 A", "text": "儿科场景常见。" }],
+      "status": "deferred",
+      "disposition": { "decision": "deferred", "reason": "等第一版上线后根据前台反馈决定。" }
+    }
+  ],
+  "developmentOrder": [
+    { "id": "dev_01", "name": "数据模型与排班", "summary": "排班、时段生成、预约表与唯一约束", "deliverables": ["数据库迁移", "时段生成任务"] },
+    { "id": "dev_02", "name": "预约与取消 API", "summary": "加锁预约、过期释放、取消规则", "dependsOn": ["dev_01"], "deliverables": ["并发预约测试", "取消时间窗测试"] },
+    { "id": "dev_03", "name": "患者前端", "dependsOn": ["dev_02"], "deliverables": ["预约页", "我的预约页"] },
+    { "id": "dev_04", "name": "前台后台与通知", "dependsOn": ["dev_02"], "deliverables": ["排班管理", "到诊标记", "短信任务表与重试"] }
+  ]
+}
