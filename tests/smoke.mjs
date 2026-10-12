@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 打包冒烟：构建 -> npm pack -> 在临时项目安装 tarball -> 运行核心命令。
 import assert from 'node:assert/strict';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,13 +10,28 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
-// Windows 的 cmd.exe 与 POSIX sh 使用不同的引号规则，这里按平台生成安全命令。
-const quote = (value) => process.platform === 'win32'
-  ? `"${String(value).replace(/"/g, '""')}"`
-  : `'${String(value).replace(/'/g, `'\\''`)}'`;
-const run = (args, cwd = root) => execSync([npm, ...args].map(quote).join(' '), { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+// Prefer the npm that launched this script (npm_execpath). Avoid shell-quoted
+// "npm.cmd" strings on Windows, which can resolve to a broken project-local shim.
+const run = (args, cwd = root) => {
+  const npmCli = process.env.npm_execpath;
+  if (npmCli) {
+    return execFileSync(process.execPath, [npmCli, ...args], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: process.env,
+    });
+  }
+  const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  return execFileSync(npmBin, args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: process.env,
+    shell: process.platform === 'win32',
+  });
+};
 const cliRun = (cliPath, args, cwd) => execFileSync(process.execPath, [cliPath, ...args], { cwd, encoding: 'utf8' });
 
 let projectDir;
