@@ -6,6 +6,8 @@
 - 读取当前设计：`zhusi design show --json`
 - 生成提交骨架：`zhusi design template --out zhusi-draft.json`
 - 提交：`zhusi design submit --input zhusi-draft.json --json`（`--input -` 可走 stdin）
+- 追加评审：`zhusi design review --input review.json --json`
+- 处置评审：`zhusi design dispose -r <评审id> -d accept|reject|defer -m "理由" -e <expectedRevision> --json`
 - 生成报告：`zhusi report --json`
 - 命令不可用时改用 `npx zhusi <command>`
 
