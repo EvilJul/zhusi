@@ -151,3 +151,29 @@ test('打包入口在仓库外运行同一行为', async () => {
   assert.equal(result.code, 0);
   assert.match(result.stdout, /Usage: zhusi/);
 });
+
+test('未初始化目录的命令给出友好提示并返回 2（含 --json）', async () => {
+  const dir = await makeTempDir('zhusi-uninit-');
+  try {
+    for (const args of [['status'], ['validate'], ['report'], ['design', 'show'], ['export'], ['repair']]) {
+      const human = await runCli([...args, '--project', dir]);
+      assert.equal(human.code, 2, `${args.join(' ')}: ${human.stderr}`);
+      assert.match(human.stderr, /尚未初始化，请先运行 zhusi init/);
+      assert.doesNotMatch(human.stderr, /ENOENT/);
+      const json = await runCli([...args, '--project', dir, '--json']);
+      assert.equal(json.code, 2);
+      const envelope = JSON.parse(json.stdout);
+      assert.equal(envelope.ok, false);
+      assert.equal(envelope.code, 'INVALID_INPUT');
+      assert.match(envelope.message, /尚未初始化，请先运行 zhusi init/);
+    }
+  } finally { await cleanup(dir); }
+});
+
+test('用法错误（缺必填选项、未知命令、未知选项）返回 2，help/version 返回 0', async () => {
+  assert.equal((await runCli(['explain', '--existing', '.'])).code, 2);
+  assert.equal((await runCli(['frobnicate'])).code, 2);
+  assert.equal((await runCli(['status', '--no-such-option'])).code, 2);
+  assert.equal((await runCli(['--help'])).code, 0);
+  assert.equal((await runCli(['--version'])).code, 0);
+});

@@ -1,0 +1,56 @@
+{
+  "summary": "zhusi 是一个 Node.js CLI：命令解析层把每个子命令委托给 services，services 通过 Workspace 读写 .zhusi/ 下的不可变快照；MCP 服务器复用同一批 services。",
+  "walkthrough": [
+    {
+      "id": "w_entry",
+      "summary": "启动：bin 指向 dist/cli/index.js，realpath 确认直接执行后调用 run",
+      "evidence": ["package.json#bin", "src/cli/index.ts:isDirectInvocation", "src/cli/index.ts:run"],
+      "classification": "fact",
+      "confidence": 0.95
+    },
+    {
+      "id": "w_submit",
+      "summary": "design submit 校验 schema 与 ready 闸门，锁内核对幂等和版本后原子写入",
+      "evidence": ["src/cli/index.ts:design submit", "src/services/design.ts:submitDesign", "src/storage/workspace.ts:commitRevision", "src/storage/workspace.ts:withLock"],
+      "classification": "fact",
+      "confidence": 0.9
+    },
+    {
+      "id": "w_mcp",
+      "summary": "MCP 请求：zhusi mcp 启动 stdio 服务器，工具处理函数调用与 CLI 相同的 services，错误转换为 isError 结果而不终止进程",
+      "evidence": ["src/mcp/server.ts:createZhusiServer", "src/mcp/server.ts:failure"],
+      "classification": "fact",
+      "confidence": 0.9
+    }
+  ],
+  "deepDive": [
+    {
+      "id": "d_layers",
+      "summary": "依赖为 cli/mcp → services → storage；适配层不直接访问存储，以便共享校验与锁",
+      "evidence": ["openspec/specs/mcp-tools/spec.md", "src/services/project.ts"],
+      "classification": "intent",
+      "confidence": 0.8
+    },
+    {
+      "id": "d_storage",
+      "summary": "存储选择 JSON 快照文件而非数据库：每个 revision 不可变、可直接 diff，原子写入依赖同目录 rename",
+      "evidence": ["src/storage/workspace.ts:writeJsonAtomic", "docs/design.md"],
+      "classification": "fact",
+      "confidence": 0.85
+    },
+    {
+      "id": "d_unknown_network_fs",
+      "summary": "在网络文件系统（NFS/SMB）上锁与原子 rename 是否仍然可靠——仓库中没有测试或文档证据",
+      "classification": "unknown",
+      "confidence": 0
+    }
+  ],
+  "limitations": [
+    "只阅读了 src/、openspec/specs/ 与 docs/；未阅读 tests/ 的全部断言细节",
+    "证据以文件:符号形式给出，行号会随提交变化"
+  ],
+  "comparisons": [
+    { "design": "docs/design.md：CLI 与 MCP 共享应用服务", "observation": "src/mcp/server.ts 只调用 services 导出函数", "result": "consistent" },
+    { "design": "roadmap：网络文件系统不承诺语义", "observation": "无相关测试", "result": "unknown" }
+  ]
+}

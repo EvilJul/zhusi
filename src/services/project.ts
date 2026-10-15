@@ -37,6 +37,7 @@ export async function getStatus(project?: string) {
 
 export async function validateProject(project?: string) {
   const workspace = await Workspace.at(project);
+  await workspace.ensureInitialized(); // 未初始化属于输入错误，不作为校验结果返回
   return { workspace, errors: await workspace.validate() };
 }
 
@@ -71,6 +72,7 @@ export async function exportMarkdown(project?: string) {
 
 export async function repairProject(project: string | undefined, apply: boolean) {
   const workspace = await Workspace.at(project);
+  await workspace.ensureInitialized(); // 未初始化时给出明确提示，而不是把错误混进修复清单
   const actions = await workspace.repairPlan();
   if (apply) {
     for (const item of actions) {

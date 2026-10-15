@@ -95,6 +95,58 @@ export const NextStepSchema = z.object({
   status: z.enum(['pending', 'done']).default('pending'),
 }).strict();
 
+// 业务流程：触发→步骤→结果，并显式记录异常分支。
+export const FlowStepSchema = z.object({
+  actor: z.string().max(200).optional(),
+  action: z.string().min(1).max(2_000),
+  result: z.string().max(2_000).optional(),
+}).strict();
+
+export const BusinessFlowSchema = z.object({
+  id: z.string().min(1).max(200),
+  name: z.string().min(1).max(200),
+  trigger: z.string().max(2_000).optional(),
+  steps: z.array(FlowStepSchema).max(200).default([]),
+  exceptions: z.array(z.string().max(2_000)).max(100).default([]),
+}).strict();
+
+// 开发顺序：按阶段排列，可声明依赖的前置阶段与交付物。
+export const DevelopmentStepSchema = z.object({
+  id: z.string().min(1).max(200),
+  name: z.string().min(1).max(200),
+  summary: z.string().max(20_000).optional(),
+  dependsOn: z.array(z.string().max(200)).max(100).default([]),
+  deliverables: z.array(z.string().max(2_000)).max(100).default([]),
+  status: z.enum(['planned', 'in-progress', 'done']).optional(),
+}).strict();
+
+export const ReviewDecisionSchema = z.enum(['accepted', 'rejected', 'deferred']);
+
+export const ReviewOpinionSchema = z.object({
+  author: z.string().max(200).optional(),
+  text: z.string().min(1).max(20_000),
+  at: z.string().datetime().optional(),
+}).strict();
+
+export const ReviewDispositionSchema = z.object({
+  decision: ReviewDecisionSchema,
+  reason: z.string().max(20_000).optional(),
+  by: z.string().max(200).optional(),
+  at: z.string().datetime().optional(),
+  revision: z.number().int().positive().optional(),
+}).strict();
+
+// 评审条目在通用条目上增加“问题→意见→处置”三段。已保存的 revision 仍接受长文。
+export const ReviewItemSchema = ItemSchema.extend({
+  opinions: z.array(ReviewOpinionSchema).max(1_000).optional(),
+  disposition: ReviewDispositionSchema.optional(),
+}).passthrough();
+
+// 新提交的评审标题沿用简写；意见和处置理由保持评审通道的原上限。
+export const BriefReviewItemSchema = ReviewItemSchema.extend({
+  summary: BriefTextSchema,
+  details: BriefDetailsSchema.optional(),
+});
 export const DesignRevisionSchema = z.object({
   schemaVersion: z.number().int().positive(),
   projectId: z.string().min(1),
@@ -107,10 +159,12 @@ export const DesignRevisionSchema = z.object({
   requirements: z.array(ItemSchema).max(10_000).default([]),
   decisions: z.array(ItemSchema).max(10_000).default([]),
   questions: z.array(ItemSchema).max(10_000).default([]),
-  reviews: z.array(ItemSchema).max(10_000).default([]),
+  reviews: z.array(ReviewItemSchema).max(10_000).default([]),
   architecture: ArchitectureSchema.default({ modules: [], dependencies: [], links: [] }),
   scope: ScopeSchema.optional(),
   nextSteps: z.array(NextStepSchema).max(20).optional(),
+  businessFlows: z.array(BusinessFlowSchema).max(1_000).default([]),
+  developmentOrder: z.array(DevelopmentStepSchema).max(1_000).default([]),
 }).strict();
 
 export const CodeSnapshotSchema = z.object({
@@ -188,10 +242,12 @@ export const DesignSubmissionSchema = z.object({
   requirements: z.array(BriefItemSchema).max(10_000).default([]),
   decisions: z.array(BriefItemSchema).max(10_000).default([]),
   questions: z.array(BriefItemSchema).max(10_000).default([]),
-  reviews: z.array(BriefItemSchema).max(10_000).default([]),
+  reviews: z.array(BriefReviewItemSchema).max(10_000).default([]),
   architecture: BriefArchitectureSchema.default({ modules: [], dependencies: [], links: [] }),
   scope: ScopeSchema.optional(),
   nextSteps: z.array(NextStepSchema).max(20).optional(),
+  businessFlows: z.array(BusinessFlowSchema).max(1_000).default([]),
+  developmentOrder: z.array(DevelopmentStepSchema).max(1_000).default([]),
 }).strict();
 
 export type DesignSubmission = z.infer<typeof DesignSubmissionSchema>;
@@ -210,6 +266,8 @@ export function createDesignTemplate(expectedRevision: number, requestId: string
     architecture: { modules: [], dependencies: [], links: [] },
     scope: { included: [], excluded: [] },
     nextSteps: [],
+    businessFlows: [],
+    developmentOrder: [],
   };
 }
 

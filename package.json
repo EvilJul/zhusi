@@ -20,7 +20,7 @@
   "bugs": {
     "url": "https://github.com/EvilJul/zhusi/issues"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "author": "EvilJul",
   "type": "module",
   "bin": {
@@ -34,7 +34,7 @@
     "prepare": "npm run build",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test": "npm run build && node scripts/run-tests.mjs",
     "lint": "npm run typecheck",
     "pack:check": "npm pack --dry-run",
     "smoke": "node tests/smoke.mjs"

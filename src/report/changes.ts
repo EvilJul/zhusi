@@ -9,7 +9,7 @@ function canonical(value: unknown): string {
 
 export function describeChanges(previous: DesignRevision, current: DesignRevision): string[] {
   const changes: string[] = [];
-  for (const [key, label] of [['requirements', '需求'], ['decisions', '决策'], ['questions', '问题'], ['reviews', '评审'], ['nextSteps', '行动']] as const) {
+  for (const [key, label] of [['requirements', '需求'], ['decisions', '决策'], ['questions', '问题'], ['reviews', '评审'], ['nextSteps', '行动'], ['businessFlows', '业务流程'], ['developmentOrder', '开发顺序']] as const) {
     const before = new Map((previous[key] ?? []).map((item) => [item.id, item]));
     const after = new Map((current[key] ?? []).map((item) => [item.id, item]));
     let added = 0, updated = 0, removed = 0, resolved = 0;
@@ -17,7 +17,8 @@ export function describeChanges(previous: DesignRevision, current: DesignRevisio
       const prior = before.get(id);
       if (!prior) added++;
       else if (canonical(prior) !== canonical(item)) {
-        if (key === 'questions' && prior.status !== 'resolved' && item.status === 'resolved') resolved++;
+        const statusOf = (value: object) => ('status' in value && typeof value.status === 'string' ? value.status : undefined);
+        if (key === 'questions' && statusOf(prior) !== 'resolved' && statusOf(item) === 'resolved') resolved++;
         else updated++;
       }
     }

@@ -16,6 +16,7 @@ import {
   validateProject,
 } from '../services/project.js';
 import { createTemplate, loadPayload, readDesign, submitDesign } from '../services/design.js';
+import { addReviews, disposeReviews, normalizeDecision } from '../services/review.js';
 import { installSkill } from '../services/skill.js';
 import { Workspace } from '../storage/workspace.js';
 import { serveZhusiMcp } from '../mcp/server.js';
@@ -162,18 +163,20 @@ export function createProgram(): Command {
 
   program
     .command('mcp')
-    .description('启动绑定项目根的 MCP stdio 服务器')
-    .option('-p, --project <path>', '项目根目录，默认当前目录')
-    .action(async (options: { project?: string }) => {
-      const root = path.resolve(options.project ?? process.cwd());
-      const workspace = await Workspace.at(root);
-      const ready = await workspace.readCore().then(() => true, () => false);
-      if (!ready) {
-        process.stderr.write(`MCP 服务器启动失败：${root} 尚未初始化，请先运行 zhusi init --project "${root}"。\n`);
-        process.exitCode = EXIT_CODES.INVALID_INPUT;
-        return;
+    .description('启动 MCP stdio 服务器；可重复 --project 绑定多个项目，第一个为默认')
+    .option('-p, --project <path>', '项目根目录，可重复；默认当前目录', (value: string, previous: string[] = []) => [...previous, value])
+    .action(async (options: { project?: string[] }) => {
+      const roots = (options.project?.length ? options.project : [process.cwd()]).map((entry) => path.resolve(entry));
+      for (const root of roots) {
+        const workspace = await Workspace.at(root);
+        const ready = await workspace.readCore().then(() => true, () => false);
+        if (!ready) {
+          process.stderr.write(`MCP 服务器启动失败：${root} 尚未初始化，请先运行 zhusi init --project "${root}"。\n`);
+          process.exitCode = EXIT_CODES.INVALID_INPUT;
+          return;
+        }
       }
-      await serveZhusiMcp(root);
+      await serveZhusiMcp(roots);
     });
 
   const design = program.command('design').description('读取、生成骨架与提交设计 revision');
@@ -240,6 +243,67 @@ export function createProgram(): Command {
       }
     });
 
+  const parseRevision = (value: string) => {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) throw new ZhusiError(`--expected-revision 需要非负整数，收到 ${value}`, 'INVALID_INPUT');
+    return parsed;
+  };
+  const parseJson = (text: string): Record<string, unknown> => {
+    try {
+      return JSON.parse(text) as Record<string, unknown>;
+    } catch (error) {
+      throw new ZhusiError(`输入不是合法 JSON：${(error as Error).message}`, 'INVALID_INPUT');
+    }
+  };
+  const emitDerived = (result: { dryRun: boolean; created: boolean; revision: { revision: number; stage: string } }, verb: string) => {
+    if (isJson(process.argv)) emit({ ok: true, dryRun: result.dryRun, created: result.created, revision: result.revision.revision, stage: result.revision.stage });
+    else if (result.dryRun) human(`校验通过（dry-run，未写入）：将生成 revision ${result.revision.revision}`);
+    else human(`${verb}，revision ${result.revision.revision}${result.created ? '' : '（幂等重试，未新增）'}`);
+  };
+
+  design
+    .command('review')
+    .description('追加评审意见（问题→意见），生成新 revision；同 id 的评审追加意见')
+    .requiredOption('-i, --input <path>', '评审批次 JSON（expectedRevision、requestId、reviews），或 - 从 stdin 读取')
+    .option('-p, --project <path>', '项目根目录，默认当前目录')
+    .option('-e, --expected-revision <number>', '覆盖载荷中的 expectedRevision', parseRevision)
+    .option('--dry-run', '只校验，不写入', false)
+    .action(async (options: { input: string; project?: string; expectedRevision?: number; dryRun: boolean }) => {
+      const batch = parseJson(await loadPayload(options.input));
+      if (options.expectedRevision !== undefined) batch.expectedRevision = options.expectedRevision;
+      const result = await addReviews({ ...(options.project === undefined ? {} : { project: options.project }), batch, dryRun: options.dryRun });
+      emitDerived(result, '评审已追加');
+    });
+
+  design
+    .command('dispose')
+    .description('把评审处置（accept | reject | defer）写回设计，生成新 revision')
+    .option('-r, --review <id>', '评审 id（与 --decision 一起使用）')
+    .option('-d, --decision <decision>', 'accept | reject | defer')
+    .option('-m, --reason <text>', '处置理由')
+    .option('-i, --input <path>', '批量处置 JSON（expectedRevision、requestId、dispositions），或 - 从 stdin 读取')
+    .option('-e, --expected-revision <number>', '刚读到的 expectedRevision', parseRevision)
+    .option('--request-id <id>', '幂等标识，重试时沿用同一个值')
+    .option('-p, --project <path>', '项目根目录，默认当前目录')
+    .option('--dry-run', '只校验，不写入', false)
+    .action(async (options: { review?: string; decision?: string; reason?: string; input?: string; expectedRevision?: number; requestId?: string; project?: string; dryRun: boolean }) => {
+      let batch: Record<string, unknown>;
+      if (options.input) {
+        if (options.review || options.decision) throw new ZhusiError('--input 与 --review/--decision 不能同时使用', 'INVALID_INPUT');
+        batch = parseJson(await loadPayload(options.input));
+        const list = Array.isArray(batch.dispositions) ? batch.dispositions as Array<Record<string, unknown>> : [];
+        batch.dispositions = list.map((entry) => ({ ...entry, decision: normalizeDecision(String(entry.decision ?? '')) }));
+      } else {
+        if (!options.review || !options.decision) throw new ZhusiError('需要 --review 与 --decision，或使用 --input 批量处置', 'INVALID_INPUT');
+        batch = { dispositions: [{ reviewId: options.review, decision: normalizeDecision(options.decision), ...(options.reason ? { reason: options.reason } : {}) }] };
+      }
+      if (options.expectedRevision !== undefined) batch.expectedRevision = options.expectedRevision;
+      if (options.requestId !== undefined) batch.requestId = options.requestId;
+      if (batch.expectedRevision === undefined) throw new ZhusiError('处置需要 expectedRevision：使用 -e 或在载荷中提供。', 'INVALID_INPUT');
+      const result = await disposeReviews({ ...(options.project === undefined ? {} : { project: options.project }), batch, dryRun: options.dryRun });
+      emitDerived(result, '评审处置已写回');
+    });
+
   program
     .command('install-skill')
     .description('把 zhusi 注册给 AI 客户端：安装 Skill 与指令文件')
@@ -283,7 +347,8 @@ export async function run(argv: readonly string[]): Promise<number> {
     return typeof process.exitCode === 'number' ? process.exitCode : 0;
   } catch (error) {
     if (error instanceof CommanderError) {
-      return error.exitCode;
+      // --help / --version 正常退出；其余用法错误（缺少必填选项、未知命令或选项）按约定属于输入错误。
+      return error.exitCode === 0 ? 0 : EXIT_CODES.INVALID_INPUT;
     }
     const issue = error instanceof ZhusiError
       ? error

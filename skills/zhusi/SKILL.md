@@ -74,7 +74,17 @@ zhusi report --json    # 返回 .zhusi/reports/index.html 的路径
     "tradeoffs": ["代价"], "revisitWhen": ["什么时候重新评估"]
   }],
   "questions": [{ "id": "q_01", "summary": "…", "priority": "blocker | important | suggestion", "status": "open | resolved" }],
-  "reviews": [{ "id": "rev_01", "summary": "…", "priority": "blocker | important | suggestion", "status": "accepted | rejected | deferred", "details": "理由" }],
+  "reviews": [{
+    "id": "rev_01", "summary": "问题", "priority": "blocker | important | suggestion",
+    "opinions": [{ "author": "评审者", "text": "意见" }],
+    "disposition": { "decision": "accepted | rejected | deferred", "reason": "处置理由" }
+  }],
+  "businessFlows": [{
+    "id": "flow_01", "name": "下单", "trigger": "触发条件",
+    "steps": [{ "actor": "用户", "action": "动作", "result": "结果" }],
+    "exceptions": ["异常分支及处理"]
+  }],
+  "developmentOrder": [{ "id": "dev_01", "name": "阶段名", "summary": "…", "dependsOn": [], "deliverables": ["交付物"], "status": "planned | in-progress | done" }],
   "architecture": {
     "modules": [{ "id": "api", "name": "HTTP API", "responsibility": "路由与校验", "layer": "入口" }],
     "dependencies": [{ "from": "api", "to": "svc", "label": "提交预约" }],
@@ -109,6 +119,22 @@ zhusi report --json    # 返回 .zhusi/reports/index.html 的路径
 | 4 | 阶段未满足 | 有未解决的 blocker；先解决或把 stage 降到 `reviewing` |
 
 `--json` 时结构化结果在 stdout，诊断在 stderr。失败时 stdout 是 `{ ok: false, code, message, retryable, latestRevision? }`。
+
+## 评审回路：问题 → 意见 → 处置
+
+评审者只追加问题和意见，不改别人的设计；处置由设计负责人完成。两步都会生成新 revision，同样遵守 `expectedRevision` / `requestId` 规则。
+
+```bash
+# 评审者：追加评审（同 id 的评审只追加 opinions）
+zhusi design review --input review.json --json
+#   review.json: { "expectedRevision": 3, "requestId": "<uuid>", "reviews": [{ "id": "rev_02", "summary": "…", "opinions": [{ "author": "…", "text": "…" }] }] }
+
+# 负责人：处置（accept | reject | defer），理由写进 --reason
+zhusi design dispose -r rev_02 -d reject -m "当前规模不需要" -e 4 --request-id <uuid> --json
+# 批量：zhusi design dispose --input dispositions.json --json
+```
+
+MCP 下对应 `zhusi_add_reviews` 与 `zhusi_dispose_reviews`。
 
 ## 已有代码架构讲解
 

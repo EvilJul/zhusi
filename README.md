@@ -5,7 +5,7 @@
 [![CI](https://github.com/EvilJul/zhusi/actions/workflows/ci.yml/badge.svg)](https://github.com/EvilJul/zhusi/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.11-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4c566a)](#环境要求)
-[![License](https://img.shields.io/badge/license-TBD-lightgrey)](#许可证)
+[![License](https://img.shields.io/badge/license-MIT-green)](#许可证)
 
 **本地优先的设计资料工具。** 让 AI 客户端帮你补充需求、记录架构决策、追踪未决问题、解释已有代码，并把结果沉淀成可进 Git 的本地文件与可离线打开的网页报告。
 
@@ -34,9 +34,9 @@
 
 ### 项目状态
 
-核心功能已实现并通过自动化验收：CLI 基础、设计写入通道、Skill 注册、MCP 工具服务器。基础变更已完成，自动测试覆盖 CLI、MCP、存储与报告。
+核心功能已实现并通过自动化验收：CLI 基础、设计写入通道、评审追加与处置、Skill 注册、MCP 服务器（工具、资源、提示、多项目）。报告包含范围、下一步、变更摘要与悬停流向。完整的“需求→提案→评审→修订”流程由双客户端 stdio 端到端测试自动模拟。
 
-尚未完成：在真实 AI 客户端上的端到端验证与提示词调优；MCP 目前只暴露工具（无资源与提示能力）。
+尚未完成：在 Codex / Claude Code / Cursor 中由真人驾驶的端到端验证与提示词调优（见[宿主差异说明](docs/host-differences.md)）；npm 尚未发布。
 
 ## 功能特性
 
@@ -47,9 +47,10 @@
 | 设计写入 | 读取 → 修改 → 提交的完整回路，支持 dry-run 与 stdin |
 | 完整性约束 | `stage: ready` 时拒绝未解决的阻塞问题；拒绝不支持的 schema 版本 |
 | 离线报告 | 自包含 HTML（内联 CSS/SVG，零脚本、零外部请求），含分层架构图 |
-| 报告内容 | 需求、架构（图 + 模块表 + 依赖方向）、决策卡片、按优先级分组的未决问题、评审记录、警告 |
+| 报告内容 | 需求、业务流程（含异常分支）、架构（图 + 模块表 + 依赖方向）、决策卡片、开发顺序、按优先级分组的未决问题、按“问题→意见→处置”折叠的评审、警告 |
+| 评审处置 | `design review` 追加评审意见，`design dispose` 把采纳 / 拒绝 / 延期写回新 revision |
 | 架构讲解 | 记录 Git commit 或目录指纹，源码变化后自动标记陈旧 |
-| AI 接入 | `install-skill` 按宿主注册；`zhusi mcp` 提供 6 个原生 MCP 工具 |
+| AI 接入 | `install-skill` 按宿主注册；`zhusi mcp` 提供 9 个工具、4 类资源与 3 个提示，可绑定多个项目 |
 
 ## 环境要求
 
@@ -134,12 +135,14 @@ zhusi report                                        # 生成离线报告
 | `zhusi design show` | 读取当前完整 revision 与 `expectedRevision` |
 | `zhusi design template` | 生成可直接填写的提交骨架 |
 | `zhusi design submit` | 校验并提交新的不可变 revision |
+| `zhusi design review` | 追加评审问题或意见（同 id 只追加意见），生成新 revision |
+| `zhusi design dispose` | 把 accept / reject / defer 处置及理由写回新 revision |
 | `zhusi report` | 生成可离线打开的静态 HTML 报告 |
 | `zhusi export` | 导出 Markdown 派生文件（含源 revision 与警告） |
 | `zhusi repair` | 报告孤立快照与陈旧锁；默认只读 |
 | `zhusi explain` | 保存已有代码项目的分层架构讲解 |
 | `zhusi install-skill` | 把 zhusi 注册给 AI 客户端 |
-| `zhusi mcp` | 启动绑定项目根的 stdio MCP 服务器 |
+| `zhusi mcp` | 启动 stdio MCP 服务器；`--project` 可重复以绑定多个项目 |
 
 通用选项：`--project PATH` 指定项目根（默认当前目录），`--json` 输出机器可读结果。
 
@@ -149,7 +152,7 @@ zhusi report                                        # 生成离线报告
 |---|---|
 | 0 | 成功 |
 | 1 | 运行错误 |
-| 2 | 输入或 schema 无效 |
+| 2 | 输入或 schema 无效；用法错误（缺少必填选项、未知命令或选项）；项目尚未初始化 |
 | 3 | 版本冲突或项目忙 |
 | 4 | 设计阶段未满足 |
 
@@ -256,8 +259,13 @@ zhusi mcp --project .
 | `zhusi_validate` | 只读校验工作空间结构与引用 |
 | `zhusi_render_report` | 生成离线 HTML 报告，返回路径 |
 | `zhusi_save_explanation` | 保存已有代码项目的架构讲解快照 |
+| `zhusi_add_reviews` | 追加评审问题或意见 |
+| `zhusi_dispose_reviews` | 采纳 / 拒绝 / 延期评审并写回 |
+| `zhusi_list_projects` | 列出已注册项目 |
 
-服务器启动时绑定单个项目根，工具不接受项目路径；stdout 只承载协议帧，日志与诊断一律走 stderr；工具失败返回结构化错误（含领域错误码与 `latestRevision`），不会中断会话。
+资源：`zhusi://projects`、`zhusi://projects/{projectId}/design`、`.../summary.md`、`.../explanation`。提示：`zhusi_design_session`（需求→提案）、`zhusi_review_design`（评审）、`zhusi_explain_codebase`（代码讲解）。
+
+`zhusi mcp --project A --project B` 可绑定多个项目，第一个为默认；工具的可选 `project` 参数只能指向已注册的项目，不能访问任意目录。stdout 只承载协议帧，日志与诊断一律走 stderr；工具失败返回结构化错误（含领域错误码与 `latestRevision`），不会中断会话。
 
 ## 网页报告
 
@@ -370,10 +378,13 @@ CI 在 Windows / macOS / Linux 上以 Node 20.x 与 22.x 运行上述检查，�
 - [x] 设计写入通道（读取 → 修改 → 提交）
 - [x] Skill 注册（Codex / Claude / Cursor）
 - [x] MCP stdio 工具服务器
-- [ ] 在真实 AI 客户端上完成端到端验证与提示词调优
 - [x] 精简报告、悬停流向、范围与下一步、版本变更摘要
-- [ ] 业务流程与评审条目的关联
-- [ ] 后续按真实需求评估 MCP 资源/提示与多项目管理
+- [x] 报告补充业务流程与开发顺序，评审讨论按「问题→意见→处置」折叠
+- [x] 评审处置命令（`design review` / `design dispose`）
+- [x] MCP 资源与提示能力；多项目管理
+- [x] 阶段 0 样例（[`examples/`](examples/)）与双客户端 stdio 端到端自动化测试
+- [ ] 在真实 AI 客户端上由真人驾驶完成端到端验证与提示词调优
+- [ ] 发布到 npm
 
 ## 参与贡献
 
@@ -391,6 +402,7 @@ CI 在 Windows / macOS / Linux 上以 Node 20.x 与 22.x 运行上述检查，�
 - [详细设计文档](docs/design.md)
 - [实施计划与验收标准](docs/roadmap.md)
 - [发布就绪说明](docs/release-readiness.md)
+- [宿主差异说明](docs/host-differences.md)
 - [手工测试指南](docs/manual-testing.md)
 - [全功能测试方案](docs/full-feature-test-plan.md)
 
@@ -401,6 +413,4 @@ CI 在 Windows / macOS / Linux 上以 Node 20.x 与 22.x 运行上述检查，�
 
 ## 许可证
 
-**尚未确定。** 本仓库当前公开可见，但在选定许可证之前不授予任何使用许可（`package.json` 中标记为 `UNLICENSED`）。
-
-如果计划正式开源，需要由维护者选定一个许可证（如 MIT、Apache-2.0）并替换 `LICENSE` 文件；在那之前请勿将本项目用于生产或再分发。
+[MIT](LICENSE) © 2026 EvilJul (Fusheng Tian)

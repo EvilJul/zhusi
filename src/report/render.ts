@@ -9,6 +9,15 @@ interface DetailItem {
   evidence?: string[]; classification?: string; confidence?: number;
   choice?: string; rationale?: string; alternatives?: string[]; tradeoffs?: string[]; revisitWhen?: string[];
 }
+interface ReviewShape extends DetailItem {
+  opinions?: Array<{ author?: string; text?: string; at?: string }>;
+  disposition?: { decision?: string; reason?: string; by?: string; at?: string; revision?: number };
+}
+interface FlowShape { id?: string; name?: string; trigger?: string; steps?: Array<{ actor?: string; action?: string; result?: string }>; exceptions?: string[] }
+interface StepShape { id?: string; name?: string; summary?: string; dependsOn?: string[]; deliverables?: string[]; status?: string }
+const STEP_LABEL: Record<string, string> = { planned: '计划中', 'in-progress': '进行中', done: '已完成' };
+const STEP_TONE: Record<string, string> = { planned: 'muted', 'in-progress': 'warn', done: 'ok' };
+const PRIORITY_TONE: Record<string, string> = { blocker: 'bad', important: 'warn', suggestion: 'muted' };
 interface ArchitectureShape {
   modules?: Array<{ id?: string; name?: string; responsibility?: string; layer?: string }>;
   dependencies?: Array<{ from?: string; to?: string; label?: string }>;
@@ -98,6 +107,45 @@ function architectureSection(architecture: ArchitectureShape): string {
     + detail('模块与依赖', moduleList + dependencyList)
     + detail('架构补充', pointDetails(architecture.notes) + linkList);
 }
+function reviewDecision(item: ReviewShape): string | undefined {
+  return item.disposition?.decision ?? (item.status && DECISION_LABEL[item.status] && item.status !== 'proposed' ? item.status : undefined);
+}
+function reviewThreads(items: ReviewShape[]): string {
+  if (!items.length) return '';
+  return items.map((item) => {
+    const decision = reviewDecision(item);
+    const priority = item.priority ? badge(PRIORITY_LABEL[item.priority] ?? item.priority, PRIORITY_TONE[item.priority] ?? 'muted') : '';
+    const state = decision ? badge(DECISION_LABEL[decision] ?? decision, DECISION_TONE[decision] ?? 'muted') : badge('待处置', 'warn');
+    const opinions = item.opinions?.length
+      ? `<ol class="plain">${item.opinions.map((opinion) => `<li>${opinion.author ? `<b>${esc(opinion.author)}</b>：` : ''}${esc(opinion.text)}</li>`).join('')}</ol>`
+      : '<p class="empty">尚无讨论意见。</p>';
+    const reason = item.disposition?.reason ?? (decision ? item.details : undefined);
+    const disposition = decision
+      ? `<p>${badge(DECISION_LABEL[decision] ?? decision, DECISION_TONE[decision] ?? 'muted')}${reason ? ` ${esc(reason)}` : ''}${item.disposition?.by ? `<span class="muted"> · ${esc(item.disposition.by)}</span>` : ''}${item.disposition?.revision ? `<span class="muted"> · revision ${item.disposition.revision}</span>` : ''}</p>`
+      : '<p class="empty">尚未处置。</p>';
+    const issueDetail = item.details && !(decision && !item.disposition?.reason) ? `<p class="muted">${esc(item.details)}</p>` : '';
+    return `<details class="thread"${decision ? '' : ' open'}><summary>${esc(item.summary)} ${priority} ${state}</summary>`
+      + `<dl><div><dt>问题</dt><dd>${esc(item.summary)}${issueDetail}</dd></div><div><dt>意见</dt><dd>${opinions}</dd></div><div><dt>处置</dt><dd>${disposition}</dd></div></dl></details>`;
+  }).join('');
+}
+function flowSection(flows: FlowShape[]): string {
+  if (!flows.length) return '';
+  return flows.map((flow) => {
+    const steps = flow.steps?.length
+      ? `<ol class="plain">${flow.steps.map((step) => `<li>${step.actor ? `<b>${esc(step.actor)}</b>：` : ''}${esc(step.action ?? '')}${step.result ? `<span class="muted"> → ${esc(step.result)}</span>` : ''}</li>`).join('')}</ol>`
+      : '<p class="empty">尚未拆分步骤。</p>';
+    const exceptions = flow.exceptions?.length ? detail(`异常流程（${flow.exceptions.length}）`, bullets(flow.exceptions)) : '';
+    return `<article class="card"><header><h3>${esc(flow.name ?? '')}</h3></header>${flow.trigger ? `<p class="muted">触发：${esc(flow.trigger)}</p>` : ''}${steps}${exceptions}</article>`;
+  }).join('');
+}
+function developmentSection(steps: StepShape[]): string {
+  if (!steps.length) return '';
+  return `<ol class="plain">${steps.map((step) => {
+    const status = step.status ? ` ${badge(STEP_LABEL[step.status] ?? step.status, STEP_TONE[step.status] ?? 'muted')}` : '';
+    const depends = step.dependsOn?.length ? `<span class="muted"> · 依赖 ${esc(step.dependsOn.join('、'))}</span>` : '';
+    return `<li><b>${esc(step.name ?? '')}</b>${status}${depends}${step.summary ? `<p class="muted">${esc(step.summary)}</p>` : ''}${bullets(step.deliverables)}</li>`;
+  }).join('')}</ol>`;
+}
 function explanationSection(explanation: Explanation, stale: boolean): string {
   const snapshot = explanation.sourceSnapshot;
   const source = snapshot.gitCommit ? `commit ${snapshot.gitCommit.slice(0, 12)}` : `目录指纹 ${String(snapshot.fingerprint).slice(0, 12)}`;
@@ -143,6 +191,9 @@ dd{margin:0}
 .badge.bad{background:var(--bad-soft);color:var(--bad)}
 .badge.muted{background:#eef1ef;color:var(--muted)}
 details{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
+details.thread{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:10px 14px;margin:0 0 10px}
+.thread dl{margin:10px 0 0;display:grid;gap:8px}
+.thread dl>div{display:grid;grid-template-columns:60px 1fr;gap:10px}
 summary{cursor:pointer;font-size:13.5px;color:var(--brand);font-weight:600}
 ul.plain{margin:8px 0 0;padding-left:18px}
 ul.plain li{margin:3px 0}
@@ -180,6 +231,9 @@ export function renderHtml(input: { state: WorkspaceState; revision: DesignRevis
   const requirements = (revision?.requirements ?? []) as DetailItem[];
   const decisions = (revision?.decisions ?? []) as DetailItem[];
   const questions = (revision?.questions ?? []) as DetailItem[];
+  const flows = (revision?.businessFlows ?? []) as FlowShape[];
+  const development = (revision?.developmentOrder ?? []) as StepShape[];
+  const reviews = (revision?.reviews ?? []) as ReviewShape[];
   const pending = questions.filter((question) => question.status !== 'resolved');
   const resolved = questions.filter((question) => question.status === 'resolved');
   const currentDecisions = decisions.filter((item) => !['rejected', 'deferred'].includes(item.status ?? ''));
@@ -193,14 +247,16 @@ export function renderHtml(input: { state: WorkspaceState; revision: DesignRevis
   const changes = revision && previousRevision ? describeChanges(previousRevision, revision) : [];
   const history = detail(`已解决问题（${resolved.length}）`, itemList(resolved))
     + detail(`已拒绝 / 延期决策（${oldDecisions.length}）`, decisionCards(oldDecisions))
-    + detail(`评审记录（${revision?.reviews.length ?? 0}）`, itemList((revision?.reviews ?? []) as DetailItem[]))
     + detail(`已完成行动（${doneSteps.length}）`, actions(doneSteps));
   const sections: Array<{ id: string; title: string; body: string }> = [
     { id: 'overview', title: '目标与范围', body: overview + (scopeBody ? `<div class="scope-grid">${scopeBody}</div>` : '') },
     { id: 'questions', title: `待决问题 · ${pending.length}`, body: questionGroups(pending) },
     { id: 'warnings', title: '需留意', body: bullets(warnings) },
     { id: 'architecture', title: '核心架构', body: architectureSection((revision?.architecture ?? {}) as ArchitectureShape) },
+    { id: 'flows', title: '业务流程', body: flowSection(flows) },
     { id: 'decisions', title: '方案与取舍', body: decisionCards(currentDecisions.slice(0, 5)) + (currentDecisions.length > 5 ? detail(`更多决策（${currentDecisions.length - 5}）`, decisionCards(currentDecisions.slice(5))) : '') },
+    { id: 'development', title: '开发顺序', body: developmentSection(development) },
+    { id: 'reviews', title: '评审记录', body: reviewThreads(reviews) },
     { id: 'next-steps', title: '下一步', body: actions(pendingSteps) },
     { id: 'requirements', title: '需求要点', body: limitedItems(requirements, '更多需求') },
     { id: 'changes', title: '本次变更', body: changes.length ? `<p class="muted">revision ${previousRevision!.revision} → ${revision!.revision}</p>${bullets(changes)}` : '' },
@@ -236,5 +292,39 @@ export function renderMarkdown(input: { state: WorkspaceState; revision: DesignR
   list('未决问题', questions.filter((item) => item.status !== 'resolved').map((item) => `${item.priority ? `[${PRIORITY_LABEL[item.priority]}] ` : ''}${item.summary}`));
   list('已解决问题', questions.filter((item) => item.status === 'resolved').map((item) => item.summary));
   list('下一步', (revision?.nextSteps ?? []).filter((step) => step.status !== 'done').map((step) => `${step.summary}${step.prerequisite ? `；前置：${step.prerequisite}` : ''}；验收：${step.acceptance}`));
+  const flows = (revision?.businessFlows ?? []) as FlowShape[];
+  const development = (revision?.developmentOrder ?? []) as StepShape[];
+  const reviews = (revision?.reviews ?? []) as ReviewShape[];
+  if (flows.length) {
+    lines.push('## 业务流程');
+    for (const flow of flows) {
+      lines.push(`### ${flow.name ?? ''}`);
+      if (flow.trigger) lines.push(`触发：${flow.trigger}`, '');
+      (flow.steps ?? []).forEach((step, index) => lines.push(`${index + 1}. ${step.actor ? `${step.actor}：` : ''}${step.action ?? ''}${step.result ? ` → ${step.result}` : ''}`));
+      if (flow.exceptions?.length) lines.push('', '异常流程：', ...flow.exceptions.map((item) => `- ${item}`));
+      lines.push('');
+    }
+  }
+  if (development.length) {
+    lines.push('## 开发顺序');
+    development.forEach((step, index) => {
+      const meta = [step.status ? STEP_LABEL[step.status] ?? step.status : '', step.dependsOn?.length ? `依赖 ${step.dependsOn.join('、')}` : ''].filter(Boolean).join('；');
+      lines.push(`${index + 1}. **${step.name}**${meta ? `（${meta}）` : ''}${step.summary ? `：${step.summary}` : ''}`);
+      for (const deliverable of step.deliverables ?? []) lines.push(`   - ${deliverable}`);
+    });
+    lines.push('');
+  }
+  if (reviews.length) {
+    lines.push('## 评审记录');
+    for (const item of reviews) {
+      const decision = reviewDecision(item);
+      lines.push('<details>', `<summary>${esc(item.summary ?? '')}（${decision ? DECISION_LABEL[decision] ?? decision : '待处置'}）</summary>`, '');
+      lines.push(`- 问题：${item.summary}${item.priority ? `（${PRIORITY_LABEL[item.priority] ?? item.priority}）` : ''}`);
+      for (const opinion of item.opinions ?? []) lines.push(`- 意见：${opinion.author ? `${opinion.author}：` : ''}${opinion.text}`);
+      const reason = item.disposition?.reason ?? (decision ? item.details : undefined);
+      lines.push(`- 处置：${decision ? `${DECISION_LABEL[decision] ?? decision}${reason ? ` — ${reason}` : ''}` : '尚未处置'}`);
+      lines.push('', '</details>', '');
+    }
+  }
   return `${lines.join('\n')}\n`;
 }

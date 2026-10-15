@@ -9,6 +9,9 @@ import { createZhusiServer } from '../dist/mcp/server.js';
 import { cliPath, cleanup, makeTempDir, runCli } from './helpers.mjs';
 
 const EXPECTED_TOOLS = [
+  'zhusi_add_reviews',
+  'zhusi_dispose_reviews',
+  'zhusi_list_projects',
   'zhusi_read_design',
   'zhusi_render_report',
   'zhusi_save_explanation',

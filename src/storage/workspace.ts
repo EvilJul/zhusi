@@ -42,7 +42,16 @@ export class Workspace {
     return { config, state, created: true };
   }
 
+  /** 只检查工作空间是否存在；内容损坏交给 readCore / validate 报告。 */
+  async ensureInitialized(): Promise<void> {
+    const initialized = await stat(path.join(this.dir, 'config.json')).then(() => true, () => false);
+    if (!initialized) {
+      throw new ZhusiError(`${this.root} 尚未初始化，请先运行 zhusi init --project "${this.root}"。`, 'INVALID_INPUT');
+    }
+  }
+
   async readCore(): Promise<{ config: ProjectConfig; state: WorkspaceState }> {
+    await this.ensureInitialized();
     return { config: await this.readJson('config.json', ProjectConfigSchema), state: await this.readJson('state.json', StateSchema) };
   }
 
