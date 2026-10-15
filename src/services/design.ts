@@ -66,6 +66,8 @@ export async function submitDesign(input: { project?: string; payload: string; e
     questions: submission.questions,
     reviews: submission.reviews,
     architecture: submission.architecture,
+    ...(submission.scope ? { scope: submission.scope } : {}),
+    ...(submission.nextSteps ? { nextSteps: submission.nextSteps } : {}),
   };
 
   const parsed = DesignRevisionSchema.parse(document);

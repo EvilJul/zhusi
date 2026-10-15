@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z, ZodError } from 'zod';
 import { ZhusiError } from '../domain/errors.js';
-import { ActorSchema, ArchitectureSchema, ItemSchema, StageSchema } from '../domain/schema.js';
+import { DesignSubmissionSchema, BriefSummarySchema, BriefItemSchema, BriefExplanationContentSchema } from '../domain/schema.js';
 import { readDesign, submitDesign } from '../services/design.js';
 import { createReport, getStatus, saveExplanation, validateProject } from '../services/project.js';
 import { Workspace } from '../storage/workspace.js';
@@ -67,18 +67,10 @@ export function createZhusiServer(projectRoot: string): McpServer {
 
   server.registerTool('zhusi_submit_design', {
     title: '提交设计',
-    description: '校验并提交一份完整设计 revision。必须带 expectedRevision（等于刚读到的值）；不要提供 schemaVersion/projectId/revision/createdAt；带 requestId 以支持幂等重试。',
+    description: '校验并提交完整设计 revision。先提炼：摘要≤120字，要点≤80字；详情最多6行、每行≤120字。必须带刚读到的 expectedRevision；不提供 schemaVersion/projectId/revision/createdAt；带 requestId 支持幂等重试。',
     inputSchema: {
+      ...DesignSubmissionSchema.shape,
       expectedRevision: z.number().int().nonnegative().describe('刚读取到的 expectedRevision'),
-      requestId: z.string().min(1).max(200).optional().describe('幂等标识，重试时沿用同一个值'),
-      actor: ActorSchema.optional(),
-      stage: StageSchema.optional(),
-      summary: z.string().max(100_000).optional(),
-      requirements: z.array(ItemSchema).max(10_000).optional(),
-      decisions: z.array(ItemSchema).max(10_000).optional(),
-      questions: z.array(ItemSchema).max(10_000).optional(),
-      reviews: z.array(ItemSchema).max(10_000).optional(),
-      architecture: ArchitectureSchema.optional(),
       dryRun: z.boolean().optional().describe('只校验，不写入'),
     },
   }, async (args) => {
@@ -116,11 +108,11 @@ export function createZhusiServer(projectRoot: string): McpServer {
     description: '为已有代码项目保存一份架构讲解快照，并记录 Git commit 或目录指纹用于陈旧检测。',
     inputSchema: {
       existing: z.string().min(1).describe('要讲解的代码项目路径'),
-      summary: z.string().max(100_000).optional(),
-      walkthrough: z.array(z.record(z.string(), z.unknown())).max(10_000).optional(),
-      deepDive: z.array(z.record(z.string(), z.unknown())).max(10_000).optional(),
-      limitations: z.array(z.string().max(10_000)).max(1_000).optional(),
-      comparisons: z.array(z.record(z.string(), z.unknown())).optional(),
+      summary: BriefSummarySchema.optional(),
+      walkthrough: z.array(BriefItemSchema.partial({ id: true })).max(10_000).optional(),
+      deepDive: z.array(BriefItemSchema.partial({ id: true })).max(10_000).optional(),
+      limitations: z.array(BriefSummarySchema).max(1_000).optional(),
+      comparisons: BriefExplanationContentSchema.shape.comparisons.optional(),
     },
   }, async (args) => {
     try {

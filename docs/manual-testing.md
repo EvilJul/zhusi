@@ -8,7 +8,7 @@
 Set-Location 'C:\Users\tian\Documents\Projects\zhusi'
 npm run build
 npm link                      # 全局注册 zhusi 命令
-zhusi --version               # 0.1.0
+zhusi --version               # 0.2.0
 ```
 
 `npm link` 建立的是指向本仓库的 Junction，之后改代码只需重新 `npm run build`，不必重复 link。

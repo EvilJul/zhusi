@@ -18,7 +18,7 @@ test('--help 在非项目目录退出 0 并输出到 stdout', async () => {
 test('--version 输出包版本', async () => {
   const result = await runCli(['--version']);
   assert.equal(result.code, 0);
-  assert.equal(result.stdout.trim(), '0.1.0');
+  assert.equal(result.stdout.trim(), '0.2.0');
 });
 
 test('npm bin 符号链接入口仍输出版本', async (t) => {
@@ -36,7 +36,7 @@ test('npm bin 符号链接入口仍输出版本', async (t) => {
     }
     const result = await runCli(['--version'], { entry: link, cwd: dir });
     assert.equal(result.code, 0);
-    assert.equal(result.stdout.trim(), '0.1.0');
+    assert.equal(result.stdout.trim(), '0.2.0');
     assert.equal(result.stderr, '');
   } finally {
     await cleanup(dir);

@@ -72,7 +72,7 @@ export async function captureCodeSnapshot(root: string): Promise<CodeSnapshot> {
     }
     fingerprint = hash.digest('hex');
   }
-  return { root, ...(gitCommit ? { gitCommit } : { fingerprint }), generatedAt: new Date().toISOString(), tool: 'zhusi/0.1.0', readScope: files, fileCount: files.length };
+  return { root, ...(gitCommit ? { gitCommit } : { fingerprint }), generatedAt: new Date().toISOString(), tool: 'zhusi/0.2.0', readScope: files, fileCount: files.length };
 }
 
 export async function isSnapshotStale(snapshot: { root: string; gitCommit?: string; fingerprint?: string }): Promise<boolean> {
@@ -90,7 +90,7 @@ export function normalizeExplanation(payload: unknown): Record<string, unknown> 
       summary: typeof item.summary === 'string' ? item.summary : '',
       details: typeof item.details === 'string' ? item.details : undefined,
       evidence: Array.isArray(item.evidence) ? item.evidence.filter((part): part is string => typeof part === 'string') : [],
-      classification: item.classification === 'fact' || item.classification === 'intent' ? item.classification : (item.evidence ? 'inferred' : 'unknown'),
+      classification: ['fact', 'intent', 'inferred', 'unknown'].includes(String(item.classification)) ? item.classification : (Array.isArray(item.evidence) && item.evidence.length ? 'inferred' : 'unknown'),
       confidence: typeof item.confidence === 'number' ? Math.max(0, Math.min(1, item.confidence)) : 0,
     }));
   };

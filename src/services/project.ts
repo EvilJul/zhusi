@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { captureCodeSnapshot, isSnapshotStale, normalizeExplanation } from '../explain/snapshot.js';
-import { SCHEMA_VERSION, type DesignRevision, type Explanation } from '../domain/schema.js';
+import { BriefExplanationContentSchema, SCHEMA_VERSION, type DesignRevision, type Explanation } from '../domain/schema.js';
 import { Workspace } from '../storage/workspace.js';
 import { renderHtml, renderMarkdown } from '../report/render.js';
 
@@ -42,6 +42,11 @@ export async function validateProject(project?: string) {
 
 export async function createReport(project?: string) {
   const status = await getStatus(project);
+  const previousRevision = status.state.currentRevision > 1
+    ? await status.workspace.readRevision(status.state.currentRevision - 1).catch((error: Error) => {
+      status.warnings.push(`无法读取上一版，未生成变更摘要：${error.message}`);
+      return null;
+    }) : null;
   const reportPath = path.join(status.workspace.dir, 'reports', 'index.html');
   const html = renderHtml({
     state: status.state,
@@ -49,6 +54,7 @@ export async function createReport(project?: string) {
     explanation: status.explanation,
     warnings: status.warnings,
     explanationStale: status.stale.explanation,
+    previousRevision,
   });
   await mkdir(path.dirname(reportPath), { recursive: true });
   await writeFile(reportPath, html, 'utf8');
@@ -83,7 +89,7 @@ export async function repairProject(project: string | undefined, apply: boolean)
 export async function saveExplanation(input: { project?: string; existing: string; payload: unknown }): Promise<Explanation> {
   const workspace = await Workspace.at(input.project);
   const { config, state } = await workspace.readCore();
-  const normalized = normalizeExplanation(input.payload);
+  const normalized = BriefExplanationContentSchema.parse(normalizeExplanation(input.payload));
   const sourceSnapshot = await captureCodeSnapshot(path.resolve(input.existing));
   return workspace.commitExplanation({
     schemaVersion: SCHEMA_VERSION,
@@ -103,7 +109,7 @@ export async function explainExisting(input: { project?: string; existing: strin
 }
 
 export function unresolvedHighPriority(revision: DesignRevision | null) {
-  return revision?.questions.filter((item) => item.priority === 'blocker' || item.priority === 'important') ?? [];
+  return revision?.questions.filter((item) => item.status !== 'resolved' && (item.priority === 'blocker' || item.priority === 'important')) ?? [];
 }
 
 export type { DesignRevision, Explanation };

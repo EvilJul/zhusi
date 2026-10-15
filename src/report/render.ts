@@ -1,166 +1,122 @@
 import type { DesignRevision, Explanation, WorkspaceState } from '../domain/schema.js';
 import { renderArchitectureDiagram } from './diagram.js';
 import { clipText, escapeHtml, safeUrl } from './escape.js';
+import { describeChanges } from './changes.js';
 
 const esc = escapeHtml;
-
-// 决策/问题/评审项允许携带固定字段之外的扩展字段，这里按报告需要放宽读取。
 interface DetailItem {
-  id?: string;
-  summary?: string;
-  status?: string;
-  priority?: string;
-  details?: string;
-  evidence?: string[];
-  classification?: string;
-  confidence?: number;
-  choice?: string;
-  rationale?: string;
-  alternatives?: string[];
-  tradeoffs?: string[];
-  revisitWhen?: string[];
+  id?: string; summary?: string; status?: string; priority?: string; details?: string;
+  evidence?: string[]; classification?: string; confidence?: number;
+  choice?: string; rationale?: string; alternatives?: string[]; tradeoffs?: string[]; revisitWhen?: string[];
 }
-
 interface ArchitectureShape {
   modules?: Array<{ id?: string; name?: string; responsibility?: string; layer?: string }>;
   dependencies?: Array<{ from?: string; to?: string; label?: string }>;
-  links?: Array<{ label?: string; url?: string }>;
-  notes?: string;
+  links?: Array<{ label?: string; url?: string }>; notes?: string;
 }
-
-const DECISION_TONE: Record<string, string> = { accepted: 'ok', proposed: 'warn', rejected: 'bad', deferred: 'muted' };
-const DECISION_LABEL: Record<string, string> = { accepted: '已采纳', proposed: '提案中', rejected: '已拒绝', deferred: '已延期' };
-const PRIORITY_TONE: Record<string, string> = { blocker: 'bad', important: 'warn', suggestion: 'muted' };
+const DECISION_TONE: Record<string, string> = { accepted: 'ok', proposed: 'warn', rejected: 'muted', deferred: 'muted' };
+const DECISION_LABEL: Record<string, string> = { accepted: '已采纳', proposed: '待确认', rejected: '已拒绝', deferred: '已延期' };
 const PRIORITY_LABEL: Record<string, string> = { blocker: '阻塞', important: '重要', suggestion: '建议' };
+const STATUS_LABEL: Record<string, string> = { ...DECISION_LABEL, confirmed: '已确认', assumed: '假设', unknown: '未知', resolved: '已解决', open: '待解决', pending: '待办', done: '已完成' };
 const CLASSIFICATION_LABEL: Record<string, string> = { fact: '代码事实', inferred: '推断', unknown: '未知', intent: '设计意图' };
-
-const badge = (text: string, tone: string) => `<span class="badge ${tone}">${esc(text)}</span>`;
-const bullets = (values: string[] | undefined) => values?.length
-  ? `<ul class="plain">${values.map((value) => `<li>${esc(value)}</li>`).join('')}</ul>`
-  : '';
+const STAGE_LABEL: Record<string, string> = { idea: '想法', clarifying: '澄清中', drafting: '草拟中', reviewing: '评审中', ready: '已就绪' };
+const badge = (text: string, tone = 'muted') => `<span class="badge ${tone}">${esc(text)}</span>`;
+const detail = (summary: string, body: string) => body ? `<details><summary>${esc(summary)}</summary>${body}</details>` : '';
 const field = (label: string, body: string) => body ? `<div><dt>${esc(label)}</dt><dd>${body}</dd></div>` : '';
-const emptyNote = (text: string) => `<p class="empty">${esc(text)}</p>`;
-const detail = (summary: string, body: string) => `<details open><summary>${esc(summary)}</summary>${body}</details>`;
 
-function shortTitle(summary: string): string {
-  const firstLine = summary.split(/[。\n!?！？]/)[0]?.trim() ?? '';
-  return clipText(firstLine || '未命名设计', 120);
+// 历史长文仅作有标识的预览，不冒充摘要；完整文本仍可展开读取。
+function compactText(value: unknown, limit = 120): string {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  const text = value.trim();
+  if (text.length <= limit && !text.includes('\n')) return `<span>${esc(text)}</span>`;
+  const first = text.split(/[。！？\n]/)[0] ?? text;
+  return detail(`原文预览：${clipText(first, 100)}`, `<div class="source-text">${esc(text)}</div>`);
 }
-
+function bullets(values: string[] | undefined): string {
+  return values?.length ? `<ul class="plain">${values.map((value) => `<li>${compactText(value)}</li>`).join('')}</ul>` : '';
+}
+function pointDetails(value: string | undefined): string {
+  return value ? bullets(value.split(/\r?\n/).map((line) => line.replace(/^\s*[-*•]\s*/, '').trim()).filter(Boolean)) : '';
+}
+function shortTitle(summary: string): string {
+  return clipText(summary.split(/[。\n!?！？]/)[0]?.trim() || '项目设计', 100);
+}
+function itemTags(item: DetailItem): string {
+  const tags = [];
+  if (item.priority && item.status !== 'resolved') tags.push(badge(PRIORITY_LABEL[item.priority] ?? item.priority, item.priority === 'blocker' ? 'bad' : item.priority === 'important' ? 'warn' : 'muted'));
+  if (item.status && STATUS_LABEL[item.status]) tags.push(badge(STATUS_LABEL[item.status]!, item.status === 'confirmed' || item.status === 'resolved' ? 'ok' : DECISION_TONE[item.status] ?? 'muted'));
+  if (item.classification && CLASSIFICATION_LABEL[item.classification]) tags.push(badge(CLASSIFICATION_LABEL[item.classification]!));
+  return tags.join(' ');
+}
 function itemList(items: DetailItem[]): string {
-  if (items.length === 0) return emptyNote('暂无内容');
-  return `<ul class="plain">${items.map((item) => {
-    const tone = item.priority ? PRIORITY_TONE[item.priority] : item.status ? DECISION_TONE[item.status] : undefined;
-    const label = item.priority ? PRIORITY_LABEL[item.priority] : item.status ? DECISION_LABEL[item.status] : undefined;
-    const tag = tone && label ? ` ${badge(label, tone)}` : '';
+  if (!items.length) return '';
+  return `<ul class="plain item-list">${items.map((item) => {
     const evidence = item.evidence?.length ? `<div class="tags">${item.evidence.map((ref) => `<span class="tag">${esc(ref)}</span>`).join('')}</div>` : '';
-    return `<li><span>${esc(item.summary)}</span>${tag}${item.details ? `<p class="muted">${esc(item.details)}</p>` : ''}${evidence}</li>`;
+    return `<li>${compactText(item.summary, 80)} ${itemTags(item)}${detail('依据与说明', pointDetails(item.details) + evidence)}</li>`;
   }).join('')}</ul>`;
 }
-
+function limitedItems(items: DetailItem[], label: string): string {
+  return itemList(items.slice(0, 5)) + (items.length > 5 ? detail(`${label}（另 ${items.length - 5} 项）`, itemList(items.slice(5))) : '');
+}
 function decisionCards(items: DetailItem[]): string {
-  if (items.length === 0) return emptyNote('暂无架构决策。重要决策应包含原因、备选方案、代价和重新评估条件。');
   return items.map((item) => {
-    const status = item.status ?? 'proposed';
     const rows = [
-      field('选择', item.choice ? esc(item.choice) : ''),
-      field('理由', item.rationale ? esc(item.rationale) : ''),
-      field('备选方案', bullets(item.alternatives)),
-      field('代价', bullets(item.tradeoffs)),
-      field('重新评估', bullets(item.revisitWhen)),
+      field('选择', item.choice && item.choice !== item.summary ? compactText(item.choice, 80) : ''),
+      field('理由', compactText(item.rationale)),
+      field('代价', bullets(item.tradeoffs?.slice(0, 1))),
     ].join('');
-    return `<article class="card"><header><h3>${esc(item.summary)}</h3>${badge(DECISION_LABEL[status] ?? status, DECISION_TONE[status] ?? 'muted')}</header>`
-      + (rows ? `<dl>${rows}</dl>` : '') + '</article>';
+    const more = [
+      field('其他代价', bullets(item.tradeoffs?.slice(1))),
+      field('备选', bullets(item.alternatives)),
+      field('重新评估', bullets(item.revisitWhen)),
+      field('补充', pointDetails(item.details)),
+      field('证据', bullets(item.evidence)),
+    ].join('');
+    return `<article class="card"><header><div class="decision-title">${compactText(item.summary, 80)}</div>${badge(DECISION_LABEL[item.status ?? 'proposed'] ?? item.status!, DECISION_TONE[item.status ?? 'proposed'] ?? 'muted')}</header>`
+      + (rows ? `<dl>${rows}</dl>` : '') + detail('取舍依据', more ? `<dl>${more}</dl>` : '') + '</article>';
   }).join('');
 }
-
 function questionGroups(items: DetailItem[]): string {
-  if (items.length === 0) return emptyNote('暂无未决问题。');
-  const groups: Array<{ key: string; label: string; tone: string; rows: DetailItem[] }> = [
-    { key: 'blocker', label: PRIORITY_LABEL.blocker!, tone: PRIORITY_TONE.blocker!, rows: items.filter((item) => item.priority === 'blocker') },
-    { key: 'important', label: PRIORITY_LABEL.important!, tone: PRIORITY_TONE.important!, rows: items.filter((item) => item.priority === 'important') },
-    { key: 'suggestion', label: PRIORITY_LABEL.suggestion!, tone: PRIORITY_TONE.suggestion!, rows: items.filter((item) => item.priority === 'suggestion') },
-    { key: 'untagged', label: '未标优先级', tone: 'muted', rows: items.filter((item) => !item.priority) },
-  ];
-  return groups.filter((group) => group.rows.length > 0).map((group) => (
-    `<div class="qgroup"><h3>${esc(group.label)}</h3>${badge(`${group.rows.length} 项`, group.tone)}</div>${itemList(group.rows)}`
-  )).join('');
+  return ['blocker', 'important', 'suggestion', 'untagged'].map((priority) => {
+    const rows = items.filter((item) => priority === 'untagged' ? !item.priority : item.priority === priority);
+    if (!rows.length) return '';
+    const body = itemList(rows);
+    return priority === 'suggestion' ? detail(`建议（${rows.length}）`, body) : body;
+  }).join('');
 }
-
-function reviewList(items: DetailItem[]): string {
-  if (items.length === 0) return emptyNote('暂无评审记录。');
-  return `<ul class="plain">${items.map((item) => {
-    const priority = item.priority ? badge(PRIORITY_LABEL[item.priority] ?? item.priority, PRIORITY_TONE[item.priority] ?? 'muted') : '';
-    const disposition = item.status ? badge(DECISION_LABEL[item.status] ?? item.status, DECISION_TONE[item.status] ?? 'muted') : '';
-    return `<li><span>${esc(item.summary)}</span> ${priority} ${disposition}${item.details ? `<p class="muted">${esc(item.details)}</p>` : ''}</li>`;
-  }).join('')}</ul>`;
+function architectureSection(architecture: ArchitectureShape): string {
+  const modules = architecture.modules ?? [];
+  const dependencies = architecture.dependencies ?? [];
+  const links = architecture.links ?? [];
+  if (!modules.length && !dependencies.length && !links.length && !architecture.notes) return '';
+  const diagram = modules.length ? renderArchitectureDiagram(modules.map((module) => ({ ...module, name: module.name ?? '未命名模块' })), dependencies.map((dependency) => ({ ...dependency, from: dependency.from ?? '', to: dependency.to ?? '' }))) : '';
+  const names = new Map(modules.map((module) => [module.id ?? module.name, module.name]));
+  const moduleList = bullets(modules.map((module) => `${module.name}${module.responsibility ? `：${module.responsibility}` : ''}`));
+  const dependencyList = bullets(dependencies.map((dependency) => `${names.get(dependency.from) ?? dependency.from} → ${names.get(dependency.to) ?? dependency.to}${dependency.label ? `：${dependency.label}` : ''}`));
+  const linkList = links.length ? `<ul class="plain">${links.map((link) => `<li><a href="${esc(safeUrl(link.url))}" rel="noreferrer">${esc(link.label ?? link.url)}</a></li>`).join('')}</ul>` : '';
+  return (diagram ? `<p class="flow-hint">悬停模块查看流向 · <span class="flow-in">蓝色流入</span> / <span class="flow-out">绿色流出</span><span class="touch-hint"> · 触屏可点选模块</span></p><div class="arch-scroll">${diagram}</div>` : '')
+    + detail('模块与依赖', moduleList + dependencyList)
+    + detail('架构补充', pointDetails(architecture.notes) + linkList);
 }
-
-function linkRow(links: Array<{ label?: string; url?: string }>): string {
-  if (links.length === 0) return '';
-  return `<div class="rows"><span class="row-label">相关链接</span><div><ul class="plain">${links.map((link) => `<li><a href="${esc(safeUrl(link.url))}" rel="noreferrer">${esc(link.label ?? link.url)}</a></li>`).join('')}</ul></div></div>`;
-}
-
-function architectureSection(architecture: ArchitectureShape | undefined): string {
-  const modules = architecture?.modules ?? [];
-  const dependencies = architecture?.dependencies ?? [];
-  const links = architecture?.links ?? [];
-
-  const diagram = renderArchitectureDiagram(
-    modules.map((module) => ({
-      ...(module.id ? { id: module.id } : {}),
-      name: module.name ?? '(未命名模块)',
-      ...(module.responsibility ? { responsibility: module.responsibility } : {}),
-      ...(module.layer ? { layer: module.layer } : {}),
-    })),
-    dependencies.map((dependency) => ({
-      from: dependency.from ?? '',
-      to: dependency.to ?? '',
-      ...(dependency.label ? { label: dependency.label } : {}),
-    })).filter((dependency) => dependency.from && dependency.to),
-  );
-
-  const moduleTable = modules.length
-    ? `<table><thead><tr><th>模块</th><th>职责</th>${modules.some((module) => module.layer) ? '<th>层</th>' : ''}</tr></thead><tbody>${modules.map((module) => `<tr><td>${esc(module.name)}</td><td>${esc(module.responsibility ?? '—')}</td>${modules.some((row) => row.layer) ? `<td>${esc(module.layer ?? '—')}</td>` : ''}</tr>`).join('')}</tbody></table>`
-    : emptyNote('尚未提供模块列表。');
-
-  const dependencyList = dependencies.length
-    ? `<ul class="plain">${dependencies.map((dependency) => `<li>${esc(dependency.from)} → ${esc(dependency.to)}${dependency.label ? `<span class="muted"> · ${esc(dependency.label)}</span>` : ''}</li>`).join('')}</ul>`
-    : '';
-
-  return `<section id="architecture"><h2>架构</h2><div class="arch-scroll">${diagram}</div>`
-    + detail('模块职责', moduleTable)
-    + (dependencyList ? detail('依赖方向', dependencyList) : '')
-    + (architecture?.notes ? `<p class="lead">${esc(architecture.notes)}</p>` : '')
-    + linkRow(links)
-    + '</section>';
-}
-
 function explanationSection(explanation: Explanation, stale: boolean): string {
-  const items = (values: unknown) => itemList((values ?? []) as DetailItem[]);
   const snapshot = explanation.sourceSnapshot;
   const source = snapshot.gitCommit ? `commit ${snapshot.gitCommit.slice(0, 12)}` : `目录指纹 ${String(snapshot.fingerprint).slice(0, 12)}`;
-  const comparisons = explanation.comparisons.length
-    ? `<ul class="plain">${explanation.comparisons.map((entry) => `<li>${esc(entry.design)} vs ${esc(entry.observation)} — ${badge(entry.result, entry.result === 'consistent' ? 'ok' : entry.result === 'stale' ? 'muted' : 'warn')}</li>`).join('')}</ul>`
-    : '';
-
-  return `<section id="explanation"><h2>已有架构讲解 ${stale ? badge('源码已变化，讲解陈旧', 'warn') : ''}</h2>`
-    + `<p class="lead">${esc(explanation.summary)}</p>`
-    + `<ul class="stats"><li><b>${snapshot.fileCount}</b><span>纳入快照的文件</span></li><li><b>${explanation.walkthrough.length}</b><span>运行路径条目</span></li><li><b>${explanation.deepDive.length}</b><span>深度分析条目</span></li></ul>`
-    + detail('运行路径', items(explanation.walkthrough))
-    + detail('模块深度', items(explanation.deepDive))
-    + (comparisons ? detail('设计与实现对照', comparisons) : '')
-    + `<p class="muted">来源：${esc(source)} · 工具：${esc(snapshot.tool)}${explanation.limitations.length ? ` · 限制：${esc(explanation.limitations.join('；'))}` : ''}</p>`
-    + '</section>';
+  const labels = { consistent: '一致', divergent: '不一致', unknown: '未知', stale: '已陈旧' };
+  const comparisons = explanation.comparisons.length ? `<ul class="plain">${explanation.comparisons.map((entry) => `<li>${badge(labels[entry.result], entry.result === 'divergent' ? 'warn' : 'muted')}${compactText(entry.design)} → ${compactText(entry.observation)}</li>`).join('')}</ul>` : '';
+  return (stale ? `<p>${badge('源码已变化，讲解需复核', 'warn')}</p>` : '')
+    + compactText(explanation.summary)
+    + detail(`运行路径（${explanation.walkthrough.length}）`, itemList(explanation.walkthrough as DetailItem[]))
+    + detail(`模块深度（${explanation.deepDive.length}）`, itemList(explanation.deepDive as DetailItem[]))
+    + detail('设计与实现对照', comparisons)
+    + detail('来源与限制', `<p class="muted">${esc(source)} · ${snapshot.fileCount} 个文件</p>` + bullets(explanation.limitations));
 }
-
 const STYLE = `
 *,*::before,*::after{box-sizing:border-box}
 :root{--ink:#16211d;--muted:#5f6d67;--line:#dde3df;--line-strong:#c6d0ca;--bg:#f4f6f3;--surface:#fff;--brand:#1d6a52;--brand-dark:#124b3a;--brand-soft:#e7f1ec;--bad:#b23c2c;--bad-soft:#fbeae6;--warn:#8a5a12;--warn-soft:#fbf1dd;--ok:#1d6a52;--ok-soft:#e7f1ec;--radius:8px}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 ui-sans-serif,system-ui,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
 .wrap{max-width:1040px;margin:0 auto;padding:0 22px}
-.hero{background:linear-gradient(180deg,#124b3a,#1a5d47);color:#fff;padding:40px 0 32px}
+.hero{background:#124b3a;color:#fff;padding:28px 0 24px}
 .hero .eyebrow{margin:0 0 10px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#a8cdbf}
 .hero h1{margin:0;font-size:30px;line-height:1.32;font-weight:700;letter-spacing:0}
 .chips{list-style:none;display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0;padding:0}
@@ -169,24 +125,18 @@ body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 ui-sans-serif
 .toc .wrap{display:flex;gap:4px;overflow-x:auto;padding-top:10px;padding-bottom:10px}
 .toc a{flex:0 0 auto;color:var(--muted);text-decoration:none;font-size:13.5px;padding:5px 11px;border-radius:6px;white-space:nowrap}
 .toc a:hover{background:var(--brand-soft);color:var(--brand-dark)}
-section{padding:30px 0;border-top:1px solid var(--line)}
+section{scroll-margin-top:80px;padding:24px 0;border-top:1px solid var(--line)}
 h2{margin:0 0 16px;font-size:20px;letter-spacing:0}
 h3{margin:0;font-size:16px}
 .lead{font-size:17px;margin:0 0 18px}
 .muted{color:var(--muted)}
 .empty{margin:0;padding:14px 16px;background:var(--surface);border:1px dashed var(--line-strong);border-radius:var(--radius);color:var(--muted)}
-.stats{list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0 0;padding:0}
-.stats li{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
-.stats b{display:block;font-size:24px;line-height:1.25}
-.stats span{font-size:13px;color:var(--muted)}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:12px}
 .card>header{display:flex;gap:12px;align-items:flex-start;justify-content:space-between}
 .card dl{margin:12px 0 0;display:grid;gap:10px}
 .card dl>div{display:grid;grid-template-columns:92px 1fr;gap:12px;align-items:start}
 dt{color:var(--muted);font-size:13px;padding-top:2px}
 dd{margin:0}
-.rows{display:grid;grid-template-columns:92px 1fr;gap:12px;margin-top:14px}
-.row-label{color:var(--muted);font-size:13px;padding-top:2px}
 .badge{display:inline-block;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600;white-space:nowrap}
 .badge.ok{background:var(--ok-soft);color:var(--ok)}
 .badge.warn{background:var(--warn-soft);color:var(--warn)}
@@ -196,8 +146,6 @@ details{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
 summary{cursor:pointer;font-size:13.5px;color:var(--brand);font-weight:600}
 ul.plain{margin:8px 0 0;padding-left:18px}
 ul.plain li{margin:3px 0}
-.qgroup{display:flex;align-items:center;gap:8px;margin:22px 0 8px}
-.qgroup:first-of-type{margin-top:0}
 .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .tag{font-size:12px;color:var(--muted);background:#eef1ef;border-radius:4px;padding:1px 7px}
 .arch-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
@@ -209,98 +157,84 @@ ul.plain li{margin:3px 0}
 .arch .node-sub{fill:var(--muted);font-size:11.5px}
 .arch .edge path{fill:none;stroke:#7b8b84;stroke-width:1.6}
 .arch .edge-label{fill:#5f6d67;font-size:10.5px;paint-order:stroke;stroke:#fff;stroke-width:3.5px;stroke-linejoin:round}
-table{width:100%;border-collapse:collapse;font-size:14.5px;margin-top:6px}
-th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
-th{font-size:12.5px;color:var(--muted);font-weight:600}
 footer{padding:26px 0 40px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);margin-top:22px}
-@media (max-width:640px){.hero h1{font-size:23px}.card dl>div,.rows{grid-template-columns:1fr;gap:2px}section{padding:24px 0}.arch{min-width:640px}table{display:block;overflow-x:auto}}
-@media print{body{background:#fff}.toc{display:none}.hero{background:#fff;color:#000;border-bottom:2px solid #000;padding:0 0 12px}.hero .eyebrow{color:#000}.chips li{border-color:#000;color:#000}.card,.stats li,.arch{break-inside:avoid}a{color:#000;text-decoration:none}}
+.scope-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.decision-title{font-weight:650}.source-text{white-space:pre-wrap;overflow-wrap:anywhere;max-height:18rem;overflow:auto;font-size:14px;line-height:1.7}
+.item-list>li{margin:12px 0}.item-list details{margin-top:6px;padding-top:5px}
+.actions{padding-left:24px}.actions li{padding:8px 0}.actions li div{font-size:14px}
+.flow-hint{font-size:13px;color:var(--muted)}.flow-in{color:#377cad}.flow-out{color:#1d6a52}.touch-hint{display:none}
+@media(hover:none){.touch-hint{display:inline}}
+.chips .urgent{background:#fbeae6;color:#902e20;border-color:transparent}
+main{overflow-wrap:anywhere}summary{overflow-wrap:anywhere}
+@media (max-width:640px){.scope-grid{grid-template-columns:1fr;gap:14px}.hero h1{font-size:23px}.card dl>div{grid-template-columns:1fr;gap:2px}section{padding:24px 0}.arch{min-width:640px}}
+@media print{.source-text{max-height:none;overflow:visible}.flow-hint{display:none}body{background:#fff}.toc{display:none}.hero{background:#fff;color:#000;border-bottom:2px solid #000;padding:0 0 12px}.hero .eyebrow{color:#000}.chips li{border-color:#000;color:#000}.card,.arch{break-inside:avoid}a{color:#000;text-decoration:none}}
 `;
 
-export function renderHtml(input: { state: WorkspaceState; revision: DesignRevision | null; explanation: Explanation | null; warnings: string[]; explanationStale?: boolean }): string {
-  const { state, revision, explanation, warnings, explanationStale = false } = input;
-  const summary = revision?.summary ?? '';
+export function renderHtml(input: { state: WorkspaceState; revision: DesignRevision | null; explanation: Explanation | null; warnings: string[]; explanationStale?: boolean; previousRevision?: DesignRevision | null }): string {
+  const { state, revision, explanation, warnings, explanationStale = false, previousRevision = null } = input;
+  const summary = (revision?.summary || explanation?.summary || '').trim();
   const title = shortTitle(summary);
-  // 页头已展示首句，概览只补上余下内容，避免重复。
-  const trimmedSummary = summary.trim();
-  const firstSentence = trimmedSummary.split(/[。\n!?！？]/)[0]?.trim() ?? '';
-  const remainder = trimmedSummary.slice(firstSentence.length).replace(/^[。.!?！？\s]+/, '');
-  const overviewLead = remainder ? `<p class="lead">${esc(remainder)}</p>` : '';
+  const firstSentence = summary.split(/[。\n!?！？]/)[0]?.trim() ?? '';
+  const remainder = summary.slice(firstSentence.length).replace(/^[。.!?！？\s]+/, '');
+  const overview = title !== firstSentence ? compactText(summary) : remainder ? (remainder.length <= 120 ? `<p class="lead">${esc(remainder)}</p>` : compactText(remainder)) : '';
   const requirements = (revision?.requirements ?? []) as DetailItem[];
   const decisions = (revision?.decisions ?? []) as DetailItem[];
   const questions = (revision?.questions ?? []) as DetailItem[];
-  const reviews = (revision?.reviews ?? []) as DetailItem[];
-  const architecture = (revision?.architecture ?? {}) as ArchitectureShape;
-  const blockers = questions.filter((question) => question.priority === 'blocker' && question.status !== 'resolved').length;
-
-  const sections = [
-    '<a href="#overview">概览</a>',
-    requirements.length ? '<a href="#requirements">需求</a>' : '',
-    '<a href="#architecture">架构</a>',
-    '<a href="#decisions">决策</a>',
-    '<a href="#questions">未决问题</a>',
-    reviews.length ? '<a href="#reviews">评审</a>' : '',
-    explanation ? '<a href="#explanation">架构讲解</a>' : '',
-    '<a href="#warnings">警告</a>',
-  ].filter(Boolean).join('');
-
+  const pending = questions.filter((question) => question.status !== 'resolved');
+  const resolved = questions.filter((question) => question.status === 'resolved');
+  const currentDecisions = decisions.filter((item) => !['rejected', 'deferred'].includes(item.status ?? ''));
+  const oldDecisions = decisions.filter((item) => ['rejected', 'deferred'].includes(item.status ?? ''));
+  const steps = revision?.nextSteps ?? [];
+  const pendingSteps = steps.filter((step) => step.status !== 'done');
+  const doneSteps = steps.filter((step) => step.status === 'done');
+  const actions = (items: typeof steps) => items.length ? `<ol class="actions">${items.map((step) => `<li><b>${esc(step.summary)}</b>${step.prerequisite ? `<div class="muted">前置：${esc(step.prerequisite)}</div>` : ''}<div>验收：${esc(step.acceptance)}</div></li>`).join('')}</ol>` : '';
+  const scope = revision?.scope;
+  const scopeBody = (scope?.included.length ? `<div><h3>本期做</h3>${bullets(scope.included)}</div>` : '') + (scope?.excluded.length ? `<div><h3>暂不做</h3>${bullets(scope.excluded)}</div>` : '');
+  const changes = revision && previousRevision ? describeChanges(previousRevision, revision) : [];
+  const history = detail(`已解决问题（${resolved.length}）`, itemList(resolved))
+    + detail(`已拒绝 / 延期决策（${oldDecisions.length}）`, decisionCards(oldDecisions))
+    + detail(`评审记录（${revision?.reviews.length ?? 0}）`, itemList((revision?.reviews ?? []) as DetailItem[]))
+    + detail(`已完成行动（${doneSteps.length}）`, actions(doneSteps));
+  const sections: Array<{ id: string; title: string; body: string }> = [
+    { id: 'overview', title: '目标与范围', body: overview + (scopeBody ? `<div class="scope-grid">${scopeBody}</div>` : '') },
+    { id: 'questions', title: `待决问题 · ${pending.length}`, body: questionGroups(pending) },
+    { id: 'warnings', title: '需留意', body: bullets(warnings) },
+    { id: 'architecture', title: '核心架构', body: architectureSection((revision?.architecture ?? {}) as ArchitectureShape) },
+    { id: 'decisions', title: '方案与取舍', body: decisionCards(currentDecisions.slice(0, 5)) + (currentDecisions.length > 5 ? detail(`更多决策（${currentDecisions.length - 5}）`, decisionCards(currentDecisions.slice(5))) : '') },
+    { id: 'next-steps', title: '下一步', body: actions(pendingSteps) },
+    { id: 'requirements', title: '需求要点', body: limitedItems(requirements, '更多需求') },
+    { id: 'changes', title: '本次变更', body: changes.length ? `<p class="muted">revision ${previousRevision!.revision} → ${revision!.revision}</p>${bullets(changes)}` : '' },
+    { id: 'explanation', title: '已有架构讲解', body: explanation ? explanationSection(explanation, explanationStale) : '' },
+    { id: 'history', title: '历史与依据', body: history },
+  ].filter((section) => section.body);
+  const blockers = pending.filter((question) => question.priority === 'blocker').length;
+  const questionStatus = blockers ? `${blockers} 项阻塞` : pending.length ? `${pending.length} 项待决` : '';
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>筑思设计报告 · revision ${state.currentRevision}</title><style>${STYLE}</style></head><body>
-<header class="hero"><div class="wrap"><p class="eyebrow">筑思 · 设计报告</p><h1>${esc(title)}</h1><ul class="chips"><li>阶段 ${esc(revision?.stage ?? 'idea')}</li><li>Revision ${state.currentRevision || '—'}</li><li>创建 ${esc((revision?.createdAt ?? state.updatedAt).slice(0, 10))}</li></ul></div></header>
-<nav class="toc"><div class="wrap">${sections}</div></nav>
-<main class="wrap">
-<section id="overview"><h2>概览</h2>${overviewLead || (summary.trim() ? '' : '<p class="lead">尚无设计摘要。</p>')}
-<ul class="stats"><li><b>${requirements.length}</b><span>需求条目</span></li><li><b>${decisions.length}</b><span>架构决策</span></li><li><b>${questions.length}</b><span>未决问题</span></li><li><b>${blockers}</b><span>阻塞项</span></li></ul></section>
-${requirements.length ? `<section id="requirements"><h2>需求</h2>${itemList(requirements)}</section>` : ''}
-${architectureSection(architecture)}
-<section id="decisions"><h2>架构决策</h2>${decisionCards(decisions)}</section>
-<section id="questions"><h2>未决问题</h2>${questionGroups(questions)}</section>
-${reviews.length ? `<section id="reviews"><h2>评审记录</h2>${reviewList(reviews)}</section>` : ''}
-${explanation ? explanationSection(explanation, explanationStale) : ''}
-<section id="warnings"><h2>警告</h2>${warnings.length ? `<ul class="plain">${warnings.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>` : '<p class="muted">无</p>'}</section>
-</main>
-<footer class="wrap">由 Zhusi 生成 · revision ${state.currentRevision || '—'} · 离线自包含，无外部依赖</footer>
-</body></html>`;
+<header class="hero"><div class="wrap"><p class="eyebrow">筑思 · 设计简报</p><h1>${esc(title)}</h1><ul class="chips"><li>${esc(STAGE_LABEL[revision?.stage ?? 'idea'])}</li><li>Revision ${state.currentRevision || '—'}</li>${questionStatus ? `<li class="${blockers ? 'urgent' : ''}">${esc(questionStatus)}</li>` : ''}</ul></div></header>
+${sections.length ? `<nav class="toc"><div class="wrap">${sections.map((section) => `<a href="#${section.id}">${esc(section.title)}</a>`).join('')}</div></nav>` : ''}
+<main class="wrap">${sections.map((section) => `<section id="${section.id}"><h2>${esc(section.title)}</h2>${section.body}</section>`).join('')}</main>
+<footer class="wrap">Zhusi · revision ${state.currentRevision || '—'} · 离线报告</footer></body></html>`;
 }
 
 export function renderMarkdown(input: { state: WorkspaceState; revision: DesignRevision | null; warnings: string[] }): string {
   const { state, revision, warnings } = input;
-  const decisions = (revision?.decisions ?? []) as DetailItem[];
-  const questions = (revision?.questions ?? []) as DetailItem[];
-  const requirements = (revision?.requirements ?? []) as DetailItem[];
-
-  const lines = [
-    `# ${shortTitle(revision?.summary ?? '')}`,
-    '',
-    `源 revision：${state.currentRevision || '无'}  `,
-    `阶段：${revision?.stage ?? 'idea'}  `,
-    `警告：${warnings.length ? warnings.join('；') : '无'}`,
-    '',
-    '## 概览',
-    revision?.summary || '尚无设计摘要。',
-    '',
-  ];
-
-  if (requirements.length) lines.push('## 需求', ...requirements.map((item) => `- ${item.summary}`), '');
-  if (decisions.length) {
-    lines.push('## 架构决策');
-    for (const item of decisions) {
-      lines.push(`### ${item.summary}${item.status ? `（${DECISION_LABEL[item.status] ?? item.status}）` : ''}`);
-      if (item.choice) lines.push(`- 选择：${item.choice}`);
-      if (item.rationale) lines.push(`- 理由：${item.rationale}`);
-      if (item.alternatives?.length) lines.push(`- 备选：${item.alternatives.join('；')}`);
-      if (item.tradeoffs?.length) lines.push(`- 代价：${item.tradeoffs.join('；')}`);
-      if (item.revisitWhen?.length) lines.push(`- 重新评估：${item.revisitWhen.join('；')}`);
-      lines.push('');
-    }
+  const lines = [`# ${shortTitle(revision?.summary ?? '')}`, '', `源 revision：${state.currentRevision || '无'}  `, `阶段：${revision?.stage ?? 'idea'}  `, `警告：${warnings.length ? warnings.join('；') : '无'}`, '', revision?.summary || '', ''];
+  const list = (title: string, values: string[]) => { if (values.length) lines.push(`## ${title}`, ...values.map((value) => `- ${value}`), ''); };
+  list('本期范围', revision?.scope?.included ?? []);
+  list('非目标', revision?.scope?.excluded ?? []);
+  list('需求', revision?.requirements.map((item) => `${item.summary}${item.status ? `（${STATUS_LABEL[item.status] ?? item.status}）` : ''}`) ?? []);
+  for (const item of (revision?.decisions ?? []) as DetailItem[]) {
+    lines.push(`## ${item.summary}（${DECISION_LABEL[item.status ?? 'proposed'] ?? item.status}）`);
+    if (item.choice && item.choice !== item.summary) lines.push(`- 选择：${item.choice}`);
+    if (item.rationale) lines.push(`- 理由：${item.rationale}`);
+    if (item.tradeoffs?.length) lines.push(`- 代价：${item.tradeoffs.join('；')}`);
+    if (item.alternatives?.length) lines.push(`- 备选：${item.alternatives.join('；')}`);
+    if (item.revisitWhen?.length) lines.push(`- 重新评估：${item.revisitWhen.join('；')}`);
+    lines.push('');
   }
-  if (questions.length) {
-    lines.push('## 未决问题');
-    for (const priority of ['blocker', 'important', 'suggestion'] as const) {
-      const group = questions.filter((question) => question.priority === priority);
-      if (group.length) lines.push(`### ${PRIORITY_LABEL[priority]}`, ...group.map((item) => `- ${item.summary}`), '');
-    }
-    const untagged = questions.filter((question) => !question.priority);
-    if (untagged.length) lines.push('### 未标优先级', ...untagged.map((item) => `- ${item.summary}`), '');
-  }
+  const questions = revision?.questions ?? [];
+  list('未决问题', questions.filter((item) => item.status !== 'resolved').map((item) => `${item.priority ? `[${PRIORITY_LABEL[item.priority]}] ` : ''}${item.summary}`));
+  list('已解决问题', questions.filter((item) => item.status === 'resolved').map((item) => item.summary));
+  list('下一步', (revision?.nextSteps ?? []).filter((step) => step.status !== 'done').map((step) => `${step.summary}${step.prerequisite ? `；前置：${step.prerequisite}` : ''}；验收：${step.acceptance}`));
   return `${lines.join('\n')}\n`;
 }

@@ -78,7 +78,7 @@ try {
 
   console.log('[8/8] bin 入口可通过 npm exec 解析');
   const execOut = run(['exec', '--no', '--', 'zhusi', '--version'], projectDir);
-  assert.equal(execOut.trim(), '0.1.0');
+  assert.equal(execOut.trim(), '0.2.0');
 
   console.log('冒烟测试通过：打包产物可独立安装并运行核心命令。');
 } finally {

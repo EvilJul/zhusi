@@ -191,3 +191,20 @@ test('未初始化目录拒绝启动且不污染 stdout', async () => {
     assert.match(result.stderr, /尚未初始化/);
   } finally { await cleanup(dir); }
 });
+
+test('MCP 拒绝长文且保留简短范围与行动的读写回路', async () => {
+  const dir = await initializedProject();
+  const { client, server } = await connect(dir);
+  try {
+    const invalid = await client.callTool({ name: 'zhusi_submit_design', arguments: { expectedRevision: 0, summary: '长'.repeat(121) } });
+    assert.equal(invalid.isError, true);
+    assert.equal(payload(await client.callTool({ name: 'zhusi_read_design', arguments: {} })).expectedRevision, 0);
+    const scope = { included: ['单店'], excluded: ['多店'] };
+    const nextSteps = [{ id: 's', summary: '实现占用', acceptance: '无重复占用', status: 'pending' }];
+    const saved = payload(await client.callTool({ name: 'zhusi_submit_design', arguments: { expectedRevision: 0, scope, nextSteps } }));
+    assert.equal(saved.created, true);
+    const read = payload(await client.callTool({ name: 'zhusi_read_design', arguments: {} }));
+    assert.deepEqual(read.revision.scope, scope);
+    assert.deepEqual(read.revision.nextSteps, nextSteps);
+  } finally { await client.close(); await server.close(); await cleanup(dir); }
+});

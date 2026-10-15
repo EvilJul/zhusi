@@ -62,6 +62,39 @@ export const ArchitectureSchema = z.object({
   notes: z.string().max(20_000).optional(),
 }).catchall(z.unknown());
 
+// 阅读旧快照仍使用原上限；只对新提交施加简写约束，不改写历史资料。
+export const BriefTextSchema = z.string().max(80, '请提炼为不超过 80 字的单条要点').refine((value) => !/[\r\n]/.test(value), '每条要点只写一行');
+export const BriefSummarySchema = z.string().max(120, '请把摘要提炼为不超过 120 字的目标与范围').refine((value) => !/[\r\n]/.test(value), '摘要只写一行，禁止大段文字');
+export const BriefDetailsSchema = z.string().max(730, '详情最多 6 条要点，每条不超过 120 字').refine(
+  (value) => { const lines = value.split(/\r?\n/).filter((line) => line.trim()); return lines.length <= 6 && lines.every((line) => line.length <= 120); },
+  '禁止大段文字：详情最多 6 行，每行一个不超过 120 字的要点',
+);
+export const BriefItemSchema = ItemSchema.extend({
+  summary: BriefTextSchema,
+  details: BriefDetailsSchema.optional(),
+  choice: BriefTextSchema.optional(),
+  rationale: BriefSummarySchema.optional(),
+  alternatives: z.array(BriefTextSchema).max(5).optional(),
+  tradeoffs: z.array(BriefTextSchema).max(5).optional(),
+  revisitWhen: z.array(BriefTextSchema).max(5).optional(),
+});
+export const BriefArchitectureSchema = ArchitectureSchema.extend({
+  modules: z.array(ArchitectureModuleSchema.extend({ name: z.string().min(1).max(40), responsibility: BriefTextSchema.optional() })).max(200).default([]),
+  dependencies: z.array(ArchitectureDependencySchema.extend({ label: BriefTextSchema.optional() })).max(500).default([]),
+  notes: BriefDetailsSchema.optional(),
+});
+export const ScopeSchema = z.object({
+  included: z.array(BriefTextSchema).max(20).default([]),
+  excluded: z.array(BriefTextSchema).max(20).default([]),
+}).strict();
+export const NextStepSchema = z.object({
+  id: z.string().min(1).max(200),
+  summary: BriefTextSchema.refine((value) => Boolean(value.trim()), '行动不能为空'),
+  prerequisite: BriefSummarySchema.optional(),
+  acceptance: BriefSummarySchema.refine((value) => Boolean(value.trim()), '验收结果不能为空'),
+  status: z.enum(['pending', 'done']).default('pending'),
+}).strict();
+
 export const DesignRevisionSchema = z.object({
   schemaVersion: z.number().int().positive(),
   projectId: z.string().min(1),
@@ -76,6 +109,8 @@ export const DesignRevisionSchema = z.object({
   questions: z.array(ItemSchema).max(10_000).default([]),
   reviews: z.array(ItemSchema).max(10_000).default([]),
   architecture: ArchitectureSchema.default({ modules: [], dependencies: [], links: [] }),
+  scope: ScopeSchema.optional(),
+  nextSteps: z.array(NextStepSchema).max(20).optional(),
 }).strict();
 
 export const CodeSnapshotSchema = z.object({
@@ -104,6 +139,19 @@ export const ExplanationSchema = z.object({
     design: z.string(), observation: z.string(), result: z.enum(['consistent', 'divergent', 'unknown', 'stale']),
   })).default([]),
 }).strict();
+
+export const BriefExplanationContentSchema = ExplanationSchema.pick({
+  summary: true, walkthrough: true, deepDive: true, limitations: true, comparisons: true,
+}).extend({
+  summary: BriefSummarySchema,
+  walkthrough: z.array(BriefItemSchema).max(10_000),
+  deepDive: z.array(BriefItemSchema).max(10_000),
+  limitations: z.array(BriefSummarySchema).max(1_000),
+  comparisons: z.array(z.object({
+    design: BriefSummarySchema, observation: BriefSummarySchema,
+    result: z.enum(['consistent', 'divergent', 'unknown', 'stale']),
+  })).default([]),
+});
 
 export const WarningSchema = z.object({ code: z.string(), message: z.string(), path: z.string().optional() });
 export const ErrorEnvelopeSchema = z.object({
@@ -136,12 +184,14 @@ export const DesignSubmissionSchema = z.object({
   requestId: z.string().min(1).max(200).optional(),
   actor: ActorSchema.optional(),
   stage: StageSchema.default('idea'),
-  summary: z.string().max(100_000).default(''),
-  requirements: z.array(ItemSchema).max(10_000).default([]),
-  decisions: z.array(ItemSchema).max(10_000).default([]),
-  questions: z.array(ItemSchema).max(10_000).default([]),
-  reviews: z.array(ItemSchema).max(10_000).default([]),
-  architecture: ArchitectureSchema.default({ modules: [], dependencies: [], links: [] }),
+  summary: BriefSummarySchema.default(''),
+  requirements: z.array(BriefItemSchema).max(10_000).default([]),
+  decisions: z.array(BriefItemSchema).max(10_000).default([]),
+  questions: z.array(BriefItemSchema).max(10_000).default([]),
+  reviews: z.array(BriefItemSchema).max(10_000).default([]),
+  architecture: BriefArchitectureSchema.default({ modules: [], dependencies: [], links: [] }),
+  scope: ScopeSchema.optional(),
+  nextSteps: z.array(NextStepSchema).max(20).optional(),
 }).strict();
 
 export type DesignSubmission = z.infer<typeof DesignSubmissionSchema>;
@@ -158,6 +208,8 @@ export function createDesignTemplate(expectedRevision: number, requestId: string
     questions: [],
     reviews: [],
     architecture: { modules: [], dependencies: [], links: [] },
+    scope: { included: [], excluded: [] },
+    nextSteps: [],
   };
 }
 

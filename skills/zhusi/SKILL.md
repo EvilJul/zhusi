@@ -65,6 +65,8 @@ zhusi report --json    # 返回 .zhusi/reports/index.html 的路径
   "actor": { "client": "<你的客户端>", "model": "<模型标识>" },
   "stage": "idea | clarifying | drafting | reviewing | ready",
   "summary": "一到两句，说清做什么、边界在哪",
+  "scope": { "included": ["本期交付什么"], "excluded": ["本期明确不做什么"] },
+  "nextSteps": [{ "id": "step_01", "summary": "一个具体动作", "prerequisite": "开始条件", "acceptance": "可检查的完成结果", "status": "pending" }],
   "requirements": [{ "id": "req_01", "summary": "…", "status": "confirmed | assumed | unknown" }],
   "decisions": [{
     "id": "dec_01", "summary": "…", "status": "accepted | proposed | rejected | deferred",
@@ -85,6 +87,13 @@ zhusi report --json    # 返回 .zhusi/reports/index.html 的路径
 
 ## 内容质量要求
 
+- **先提炼，再提交，禁止大段文字**：摘要最多 120 字；每条需求、问题、评审、决策标题最多 80 字，均只写一行。上限不是目标，优先写 20–40 字。
+- **摘要只回答目标与边界**：最多两句，不重复标题，不写背景铺垫、空泛收益或套话。
+- **决策只抓取舍**：`choice` 最多 80 字，`rationale` 最多 120 字；`alternatives` / `tradeoffs` / `revisitWhen` 每组最多 5 条，每条最多 80 字。优先只写最重要的一条代价。
+- **详情也必须精炼**：`details` 和 `architecture.notes` 最多 6 行，每行一个不超过 120 字的要点；禁止把长文搬进折叠区来绕过限制。被拒绝时必须改写提炼，不可直接截断关键条件。
+- **图上只写标签**：模块名最多 40 字，职责和连线说明最多 80 字。`dependencies` 必须提供真实的 `from` → `to`，报告只在悬停 / 聚焦模块时显示直接上游与下游，不凭空推断连线。
+- **范围与行动分开**：`scope.included` / `excluded` 每项最多 80 字；`nextSteps` 记录动作、可选前置条件和必填验收结果，完成后标 `done`。两者均为可选字段，读回提交时必须保留。
+- **旧资料可读，新提交必须精简**：旧快照原样保留；若旧内容超限，先准确提炼全部要点后再提交，不丢失阻塞条件。HTML 的“原文预览”只是兼容旧资料，不是生成摘要。
 - **事实、假设、未知分开**：没确认的规模/预算/合规写成 `assumed` 或 `unknown`，不要写成既定事实。
 - **每个重要决策都要有理由和代价**：只写结论的决策等于没写。
 - **关键结论要有证据**：解释已有代码时，`evidence` 里写 `文件:行号`；没有证据就标 `inferred` 或 `unknown`。

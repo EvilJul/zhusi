@@ -94,7 +94,7 @@ node "$PWD\scripts\seed-demo.mjs" $Demo
 node $CLI --version
 ```
 
-预期：stdout 输出 `0.1.0`，退出码 `0`，stderr 为空。
+预期：stdout 输出 `0.2.0`，退出码 `0`，stderr 为空。
 
 结果：☐ 通过 ☐ 失败
 

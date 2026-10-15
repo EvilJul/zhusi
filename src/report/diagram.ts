@@ -143,9 +143,9 @@ export function renderArchitectureDiagram(modules: DiagramModule[], dependencies
     const columnSpan = Math.abs((columnIndex.get(layerOf[to]!) ?? 0) - (columnIndex.get(layerOf[from]!) ?? 0));
     const x1 = sameColumn || forward ? a.x + NODE_W : a.x;
     const y1 = a.y + NODE_H / 2;
-    const x2 = sameColumn || forward ? b.x : b.x + NODE_W;
+    const x2 = sameColumn ? b.x + NODE_W : forward ? b.x : b.x + NODE_W;
     const y2 = b.y + NODE_H / 2;
-    const reach = Math.max(34, Math.abs(x2 - x1) / 2);
+    const reach = sameColumn ? COL_GAP * 0.45 : Math.max(34, Math.abs(x2 - x1) / 2);
     const direction = sameColumn || forward ? 1 : -1;
     // 跨列连线从中间模块上方绕过，避免从节点框后面穿过。
     const bow = columnSpan > 1 && !sameColumn ? SKIP_BOW : 0;
@@ -157,10 +157,10 @@ export function renderArchitectureDiagram(modules: DiagramModule[], dependencies
     const title = dependency.label ? `<title>${escapeHtml(dependency.label)}</title>` : '';
     const midX = (x1 + 3 * (x1 + direction * reach) + 3 * (x2 - direction * reach) + x2) / 8;
     const midY = (y1 + 3 * cy1 + 3 * cy2 + y2) / 8;
-    const label = dependency.label && Math.abs(x2 - x1) >= 84
-      ? `<text class="edge-label" x="${midX.toFixed(1)}" y="${(midY - 4).toFixed(1)}" text-anchor="middle">${escapeHtml(clipText(dependency.label, 18))}</text>`
+    const label = dependency.label && (sameColumn || Math.abs(x2 - x1) >= 84)
+      ? `<text class="edge-label" x="${(sameColumn ? x1 - 8 : midX).toFixed(1)}" y="${(midY - 4).toFixed(1)}" text-anchor="${sameColumn ? 'end' : 'middle'}">${escapeHtml(clipText(dependency.label, 18))}</text>`
       : '';
-    return `<g class="edge">${title}<path d="${path}" marker-end="url(#arrow)"/>${label}</g>`;
+    return `<g class="edge" data-from="${from}" data-to="${to}">${title}<path d="${path}" marker-end="url(#arrow)"/>${label}</g>`;
   }).join('');
 
   const nodes = modules.map((module, index) => {
@@ -170,15 +170,37 @@ export function renderArchitectureDiagram(modules: DiagramModule[], dependencies
     const subtitle = responsibility ? clipText(responsibility, 30) : '';
     const tooltip = responsibility ? `${module.name} — ${responsibility}` : module.name;
     const single = !subtitle;
-    return `<g class="node"><title>${escapeHtml(tooltip)}</title>`
+    return `<g class="node" data-node="${index}" tabindex="0" role="group" aria-label="${escapeHtml(tooltip)}"><title>${escapeHtml(tooltip)}</title>`
       + `<rect x="${spot.x}" y="${spot.y}" width="${NODE_W}" height="${NODE_H}" rx="8"/>`
       + `<text class="node-name" x="${spot.x + NODE_W / 2}" y="${spot.y + (single ? NODE_H / 2 + 5 : 29)}" text-anchor="middle">${escapeHtml(name)}</text>`
       + (single ? '' : `<text class="node-sub" x="${spot.x + NODE_W / 2}" y="${spot.y + 50}" text-anchor="middle">${escapeHtml(subtitle)}</text>`)
       + '</g>';
   }).join('');
 
-  return `<svg class="arch" viewBox="0 0 ${width} ${height}" role="img" aria-label="模块依赖架构图">`
+  // 选择器只使用内部数字索引，绝不把用户提供的名称或 id 拼进 CSS。
+  // :focus-visible 保留键盘访问；鼠标点击后移开不会遗留流向。
+  const flowRules = modules.map((_, index) => {
+    const hover = `.arch:has(.node[data-node="${index}"]:hover)`;
+    const keyboard = `.arch:not(:has(.node:hover)):has(.node[data-node="${index}"]:focus-visible)`;
+    const touch = `.arch:has(.node[data-node="${index}"]:focus)`;
+    const rules = (selector: string) => `${selector} .edge[data-to="${index}"]{opacity:1;--flow:#377cad}${selector} .edge[data-to="${index}"] path{marker-end:url(#arrow-in)}${selector} .edge[data-from="${index}"]{opacity:1;--flow:#1d6a52}${selector} .edge[data-from="${index}"] path{marker-end:url(#arrow-out)}`;
+    return rules(hover) + rules(keyboard) + `@media(hover:none){${rules(touch)}}`;
+  }).join('');
+
+  return `<svg class="arch" viewBox="0 0 ${width} ${height}" role="group" aria-label="模块依赖架构图：悬停或聚焦模块查看流向">`
     + '<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">'
     + '<path d="M0,0 L9,4.5 L0,9 z" fill="#7b8b84"/></marker></defs>'
+    + '<defs><marker id="arrow-in" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#377cad"/></marker><marker id="arrow-out" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#1d6a52"/></marker></defs>'
+    + `<style>
+.arch .edge{opacity:0;pointer-events:none;--flow:#7b8b84;transition:opacity .16s ease}
+.arch .edge path{stroke:var(--flow);stroke-width:2;stroke-dasharray:7 5;animation:flow 1s linear infinite}
+.arch .edge-label{fill:var(--flow)}
+.arch .node{outline:none;cursor:default}
+.arch .node:is(:hover,:focus-visible) rect{stroke:#1d6a52;stroke-width:2.5;fill:#e7f1ec}
+${flowRules}
+@keyframes flow{to{stroke-dashoffset:-24}}
+@media(prefers-reduced-motion:reduce){.arch .edge{transition:none}.arch .edge path{animation:none}}
+@media print{.arch .edge{opacity:1!important}.arch .edge path{animation:none;stroke-dasharray:none}}
+</style>`
     + bands + drawnEdges + nodes + '</svg>';
 }
